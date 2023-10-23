@@ -6,16 +6,20 @@ import sys
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import warnings
 
 import colorlog
-from PyQt5.QtCore import QObject, pyqtSignal
-from PyQt5.QtWidgets import QPlainTextEdit, QMessageBox
+# from PyQt5.QtCore import QObject, pyqtSignal
+# from PyQt5.QtWidgets import QPlainTextEdit, QMessageBox
 
 # from UICore.Gv import SplitterState, singleton
 from colorama import Fore
 from tqdm import tqdm
 
 from Core.common import singleton
+
+warnings.filterwarnings("ignore", category=RuntimeWarning)  # 忽略warning
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 cur_path, filename = os.path.split(os.path.abspath(sys.argv[0]))
 log_path = os.path.join(cur_path, 'logs')
@@ -37,87 +41,90 @@ log_colors_config = {
 }
 
 class mTqdm(tqdm):
-    def __init__(self, iteration):
+    def __init__(self, iteration=None, total=None):
         super(mTqdm, self).__init__(
             iterable=iteration,
             ncols=100,
+            leave=True,
+            total=total,
             bar_format='%s{l_bar}{bar}%s{r_bar}' % (Fore.BLUE, Fore.BLUE))
 
 
-class Handler(QObject, logging.Handler):
-    new_record = pyqtSignal(object)
-    clear_record = pyqtSignal(object)
-    set_record = pyqtSignal(object)
-
-    def __init__(self, parent):
-        # super().__init__(parent)
-        # super(logging.Handler).__init__()
-        QObject.__init__(self)
-        logging.Handler.__init__(self)
-        self.parent = parent
-        self.stringList = []
-        self.setLevel(logging.INFO)  # logviewer不显示info以下级别的日志
-        # formatter = logging.Formatter(
-        #     '[%(asctime)s] [%(filename)s:%(lineno)d] [%(levelname)s]- %(message)s')
-        # formatter = logging.Formatter('[%(asctime)s] [%(levelname)s]- %(message)s')
-        formatter = logging.Formatter('[%(asctime)s] - %(message)s')
-        self.setFormatter(formatter)
-        if hasattr(parent, "splitter"):
-            parent.splitter.handle(1).handleClicked.connect(self.handleClicked)
-        elif hasattr(parent, "dockLogView"):
-            q = parent.dockLogView.toggleViewAction()
-            if q is not None:
-                q.triggered.connect(self.handleClicked)
-
-        self.color = "#000000"
-
-    def setColor(self, _color):
-        self.color = _color
-
-    def handleClicked(self):
-        pass
-        # if hasattr(self.parent, "splitter"):
-        #     if self.parent.splitter.splitterState == SplitterState.collapsed:
-        #         #  splitter缩起来时必须要先清空plainText，否则会卡死
-        #         self.clear_record.emit(self.parent)
-        #     else:
-        #         # output = os.linesep.join(self.stringList)
-        #         output = "<br>".join(self.stringList)
-        #         self.set_record.emit(output)
-        # elif hasattr(self.parent, "dockLogView"):
-        #     if not self.parent.dockLogView.isVisible():
-        #         self.clear_record.emit(self.parent)
-        #     else:
-        #         output = "<br>".join(self.stringList)
-        #         self.set_record.emit(output)
-
-    def emit(self, record):
-        msg = self.format(record)
-        if record.levelno == 40:
-            msg = '<font color=\"#FF0000\">{}</font>'.format(msg)  ## 红色
-        elif record.levelno == 30:
-            msg = '<font color=\"#FFA500\">{}</font>'.format(msg)  ## 橙色
-        elif record.levelno == 20:
-            msg = '<font color={}>{}</font>'.format(self.color, msg)  ## 自定义颜色
-        # msg = "<span style=\" font-size:8pt; font-weight:600; color:#ff0000;\" >"
-        # msg += self.format(record)
-        # msg += "</span>"
-        if hasattr(self.parent, "splitter"):
-            if self.parent.splitter.splitterState == SplitterState.expanded:
-                if len(self.stringList) > 500:
-                    self.clear_record.emit(self.parent)
-                else:
-                    self.new_record.emit(msg)  # <---- emit signal here
-        elif hasattr(self.parent, "dockLogView"):
-            if self.parent.dockLogView.isVisible():
-                if len(self.stringList) > 500:
-                    self.clear_record.emit(self.parent)
-                else:
-                    self.new_record.emit(msg)  # <---- emit signal here
-
-        if len(self.stringList) > 500:
-            self.stringList.clear()
-        self.stringList.append(msg)
+# class Handler(QObject, logging.Handler):
+#     new_record = pyqtSignal(object)
+#     clear_record = pyqtSignal(object)
+#     set_record = pyqtSignal(object)
+#
+#     def __init__(self, parent):
+#         # super().__init__(parent)
+#         # super(logging.Handler).__init__()
+#         QObject.__init__(self)
+#         logging.Handler.__init__(self)
+#         self.parent = parent
+#         self.stringList = []
+#         self.setLevel(logging.INFO)  # logviewer不显示info以下级别的日志
+#         # formatter = logging.Formatter(
+#         #     '[%(asctime)s] [%(filename)s:%(lineno)d] [%(levelname)s]- %(message)s')
+#         # formatter = logging.Formatter('[%(asctime)s] [%(levelname)s]- %(message)s')
+#         formatter = logging.Formatter('[%(asctime)s] - %(message)s')
+#         self.setFormatter(formatter)
+#         if hasattr(parent, "splitter"):
+#             parent.splitter.handle(1).handleClicked.connect(self.handleClicked)
+#         elif hasattr(parent, "dockLogView"):
+#             q = parent.dockLogView.toggleViewAction()
+#             if q is not None:
+#                 q.triggered.connect(self.handleClicked)
+#
+#         self.color = "#000000"
+#
+#     def setColor(self, _color):
+#         self.color = _color
+#
+#     def handleClicked(self):
+#         pass
+#         # if hasattr(self.parent, "splitter"):
+#         #     if self.parent.splitter.splitterState == SplitterState.collapsed:
+#         #         #  splitter缩起来时必须要先清空plainText，否则会卡死
+#         #         self.clear_record.emit(self.parent)
+#         #     else:
+#         #         # output = os.linesep.join(self.stringList)
+#         #         output = "<br>".join(self.stringList)
+#         #         self.set_record.emit(output)
+#         # elif hasattr(self.parent, "dockLogView"):
+#         #     if not self.parent.dockLogView.isVisible():
+#         #         self.clear_record.emit(self.parent)
+#         #     else:
+#         #         output = "<br>".join(self.stringList)
+#         #         self.set_record.emit(output)
+#
+#     def emit(self, record):
+#         msg = self.format(record)
+#         if record.levelno == 40:
+#             msg = '<font color=\"#FF0000\">{}</font>'.format(msg)  ## 红色
+#         elif record.levelno == 30:
+#             msg = '<font color=\"#FFA500\">{}</font>'.format(msg)  ## 橙色
+#         elif record.levelno == 20:
+#             msg = '<font color={}>{}</font>'.format(self.color, msg)  ## 自定义颜色
+#         # msg = "<span style=\" font-size:8pt; font-weight:600; color:#ff0000;\" >"
+#         # msg += self.format(record)
+#         # msg += "</span>"
+#
+#         if hasattr(self.parent, "splitter"):
+#             if self.parent.splitter.splitterState == SplitterState.expanded:
+#                 if len(self.stringList) > 500:
+#                     self.clear_record.emit(self.parent)
+#                 else:
+#                     self.new_record.emit(msg)  # <---- emit signal here
+#         elif hasattr(self.parent, "dockLogView"):
+#             if self.parent.dockLogView.isVisible():
+#                 if len(self.stringList) > 500:
+#                     self.clear_record.emit(self.parent)
+#                 else:
+#                     self.new_record.emit(msg)  # <---- emit signal here
+#
+#         if len(self.stringList) > 500:
+#             self.stringList.clear()
+#         self.stringList.append(msg)
 
 
 class up_stacked_logger:
@@ -155,12 +162,12 @@ class Log:
         self.handle_logs()
         self.handler = None
 
-    def setLogViewer(self, parent, logViewer: QPlainTextEdit):
-        self.handler = Handler(parent)
-        self.logViewer = logViewer
-        self.handler.new_record.connect(self.logViewer.appendHtml)
-        self.handler.clear_record.connect(self.logViewer.clear)
-        self.handler.set_record.connect(self.logViewer.appendHtml)
+    # def setLogViewer(self, parent, logViewer: QPlainTextEdit):
+    #     self.handler = Handler(parent)
+    #     self.logViewer = logViewer
+    #     self.handler.new_record.connect(self.logViewer.appendHtml)
+    #     self.handler.clear_record.connect(self.logViewer.clear)
+    #     self.handler.set_record.connect(self.logViewer.appendHtml)
 
     def get_file_sorted(self, file_path):
         """最后修改时间顺序升序排列 os.path.getmtime()->获取文件最后修改时间"""
@@ -255,15 +262,15 @@ class Log:
 
     def info(self, message, parent=None, color="#000000", dialog=False):
         self.__console('info', message, color)
-        if dialog:
-            QMessageBox.information(parent, "提示", message, QMessageBox.Close)
+        # if dialog:
+        #     QMessageBox.information(parent, "提示", message, QMessageBox.Close)
 
     def warning(self, message, parent=None, color="#000000", dialog=False):
         self.__console('warning', message, color)
-        if dialog:
-            QMessageBox.warning(parent, "警告", message, QMessageBox.Close)
+        # if dialog:
+        #     QMessageBox.warning(parent, "警告", message, QMessageBox.Close)
 
     def error(self, message, parent=None, color="#000000", dialog=False):
         self.__console('error', message, color)
-        if dialog:
-            QMessageBox.critical(parent, "错误", message, QMessageBox.Close)
+        # if dialog:
+        #     QMessageBox.critical(parent, "错误", message, QMessageBox.Close)

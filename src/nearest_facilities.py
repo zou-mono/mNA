@@ -1,12 +1,9 @@
 import os, sys
 import traceback
+from multiprocessing import current_process
 from time import time, strftime
 
 import networkx as nx
-from PyQt5.QtCore import QVariant
-from qgis._analysis import QgsVectorLayerDirector, QgsNetworkDistanceStrategy, QgsGraphBuilder, QgsGraphAnalyzer
-from qgis._core import QgsVectorLayer, QgsField, QgsPointXY, QgsWkbTypes, QgsSpatialIndex, QgsRectangle, \
-    QgsVectorFileWriter, QgsFeature, QgsProject, QgsGeometry, QgsLineString, QgsProviderRegistry, QgsApplication
 from shapely import STRtree
 from tqdm import tqdm
 
@@ -14,9 +11,10 @@ from Core.common import resource_path, set_main_path
 from Core.log4p import Log, mTqdm
 from colorama import Fore
 
-from Core.graph import makeGraph
+from Core.graph import makeGraph, Direction
 
 log = Log(__name__)
+
 
 def nearest_facilities_from_layer(
         input_network_data,
@@ -29,7 +27,7 @@ def nearest_facilities_from_layer(
         backwardValue="",
         bothValue="",
         distance_tolerance=500,  # 从原始点到网络最近snap点的距离容差，如果超过说明该点无法到达网络，不进行计算
-        defaultDirection=QgsVectorLayerDirector.Direction.DirectionBoth,
+        defaultDirection=Direction.DirectionBoth,
         out_type=0):
 
     start_time = time()
@@ -67,6 +65,47 @@ def nearest_facilities(mNetwork,
     pass
 
 
+def nearest_facilities_from_point2(G, start_node, target_df,
+                                  travelCost,
+                                  bRoutes=True,
+                                  bDistances=True):
+
+    match_routes = {}
+    match_distances = {}
+
+    # return current_process().name + '-' + str(start_node)
+
+    distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
+                                                  cutoff=travelCost)
+
+    if len(routes) > 1:  # 只有一个是本身，不算入搜索结果
+        # 寻找匹配到的目标设施对应的node以及fid
+        match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
+
+        # match_nodes = match_df['nodeID']
+        for row in match_df.itertuples():
+            match_node = row.nodeID
+            target_fid = row.fid
+
+            if bRoutes:
+                route = routes[match_node]
+                target_fid = row.fid
+                match_routes[target_fid] = route
+
+            if bDistances:
+                dis = distances[match_node]
+                match_distances[target_fid] = dis
+
+    if bRoutes and bDistances:
+        return match_routes, match_distances
+
+    if bRoutes:
+        return match_routes
+
+    if bDistances:
+        return match_distances
+
+
 def nearest_facilities_from_point(G, start_point, target_df,
                                    travelCost,
                                    distance_tolerance=500,
@@ -87,6 +126,9 @@ def nearest_facilities_from_point(G, start_point, target_df,
 
     new_G, snapped_start_nodeIDs = makeGraph(G, [start_point], rtree=rtree, o_max=o_max,
                                              distance_tolerance=distance_tolerance)
+
+    if snapped_start_nodeIDs[0] == -1:
+        return None
 
     distances, routes = nx.single_source_dijkstra(new_G, snapped_start_nodeIDs[0], weight='length',
                                                cutoff=travelCost)
@@ -169,9 +211,9 @@ def export_to_file(results, fields, crs, layer_start, out_path, out_type):
 
 
 if __name__ == '__main__':
-    QgsApplication.setPrefixPath('', True)
-    app = QgsApplication([], True)
-    app.initQgis()
+    # QgsApplication.setPrefixPath('', True)
+    # app = QgsApplication([], True)
+    # app.initQgis()
 
     nearest_facilities_from_layer(
         r"D:\空间模拟\PublicSupplyDemand\Data\sz_road_cgcs2000_test.shp",

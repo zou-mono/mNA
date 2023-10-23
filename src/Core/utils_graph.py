@@ -1,7 +1,9 @@
 import networkx as nx
 import numpy as np
+from rtree import index
 from shapely import Point, LineString, distance, STRtree
 import geopandas as gpd
+from shapely.lib import Geometry
 from shapely.ops import nearest_points, split, snap
 
 from Core.log4p import Log
@@ -109,6 +111,18 @@ def _is_endpoint_of_edge(point: Point, edge: LineString, tolerance=5):
         else:
             return False, ""
 
+
+# 判断当前点在线段的垂足是否在线段上
+def is_projectPoint_in_segment(point: Point, segment: LineString):
+    a = [point.x, point.y]
+    b, c = segment.coords
+    t = (a[0]-b[0])*(c[0]-b[0]) + (a[1]-b[1])*(c[1]-b[1])
+    t = t / ((c[0]-b[0])**2 + (c[1]-b[1])**2)
+
+    if 0 < t < 1:
+        return True
+    else:
+        return False
 
 def euclidean_dist_vec(y1, x1, y2, x2):
     return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
