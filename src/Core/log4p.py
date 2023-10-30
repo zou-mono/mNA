@@ -41,11 +41,13 @@ log_colors_config = {
 }
 
 class mTqdm(tqdm):
-    def __init__(self, iteration=None, total=None):
+    def __init__(self, iteration=None, ncols=100, desc=None, leave=True, position=0, total=None):
         super(mTqdm, self).__init__(
             iterable=iteration,
-            ncols=100,
-            leave=True,
+            ncols=ncols,
+            leave=leave,
+            position=position,
+            desc=desc,
             total=total,
             bar_format='%s{l_bar}{bar}%s{r_bar}' % (Fore.BLUE, Fore.BLUE))
 

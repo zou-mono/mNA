@@ -1,6 +1,6 @@
 import os, sys
 import traceback
-from multiprocessing import current_process
+from multiprocessing import current_process, Lock
 from time import time, strftime
 
 import networkx as nx
@@ -14,7 +14,7 @@ from colorama import Fore
 from Core.graph import makeGraph, Direction
 
 log = Log(__name__)
-
+lock = Lock()
 
 def nearest_facilities_from_layer(
         input_network_data,
@@ -65,7 +65,7 @@ def nearest_facilities(mNetwork,
     pass
 
 
-def nearest_facilities_from_point2(G, start_node, target_df,
+def nearest_facilities_from_point(G, start_node, target_df,
                                   travelCost,
                                   bRoutes=True,
                                   bDistances=True):
@@ -106,59 +106,70 @@ def nearest_facilities_from_point2(G, start_node, target_df,
         return match_distances
 
 
-def nearest_facilities_from_point(G, start_point, target_df,
-                                   travelCost,
-                                   distance_tolerance=500,
-                                   bRoutes=True,
-                                   rtree=None,
-                                   o_max=-1,
-                                   bDistances=True):
+def nearest_facilities_from_point_worker(connection, shared_custom, lst, travelCost, bRoutes=True,
+                                         bDistances=True, ipos=0):
+    G, target_df = shared_custom.task()
 
-    match_routes = {}
-    match_distances = {}
+    nearest_facilities = {}
 
-    if rtree is None:
-        edge_geoms = list(nx.get_edge_attributes(G, "geometry").values())
-        rtree = STRtree(edge_geoms)
+    # tqdm.set_lock(tqdm.get_lock())
+    # ipos = current_process()._identity[0]-1
 
-    if o_max == -1:
-        o_max = max(G.nodes)
+    # mTqdm.set_lock(mTqdm.get_lock())
+    with lock:
+        bar = mTqdm(lst, desc=current_process().name, position=ipos, leave=False)
+    # with mTqdm(lst, desc=current_process().name, position=ipos, leave=False) as bar:
+    for t in lst:
+        start_node = t[0]
+        fid = t[1]
+        distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
+                                                      cutoff=travelCost)
+        # print(routes)
+        # print(current_process().name + '-' + str(start_node))
 
-    new_G, snapped_start_nodeIDs = makeGraph(G, [start_point], rtree=rtree, o_max=o_max,
-                                             distance_tolerance=distance_tolerance)
+        match_routes = {}
+        match_distances = {}
 
-    if snapped_start_nodeIDs[0] == -1:
-        return None
+        if len(routes) > 1:  # 只有一个是本身，不算入搜索结果
+            # 寻找匹配到的目标设施对应的node以及fid
+            match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
 
-    distances, routes = nx.single_source_dijkstra(new_G, snapped_start_nodeIDs[0], weight='length',
-                                               cutoff=travelCost)
-
-    if len(routes) > 1:  # 只有一个是本身，不算入搜索结果
-        # 寻找匹配到的目标设施对应的node以及fid
-        match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
-
-        # match_nodes = match_df['nodeID']
-        for row in match_df.itertuples():
-            match_node = row.nodeID
-            target_fid = row.fid
-
-            if bRoutes:
-                route = routes[match_node]
+            for row in match_df.itertuples():
+                match_node = row.nodeID
                 target_fid = row.fid
-                match_routes[target_fid] = route
 
-            if bDistances:
-                dis = distances[match_node]
-                match_distances[target_fid] = dis
+                if bRoutes:
+                    route = routes[match_node]
+                    target_fid = row.fid
+                    match_routes[target_fid] = route
 
-    if bRoutes and bDistances:
-        return match_routes, match_distances
+                if bDistances:
+                    dis = distances[match_node]
+                    match_distances[target_fid] = dis
 
-    if bRoutes:
-        return match_routes
+        if bRoutes and bDistances:
+            nearest_facilities[fid] = {
+                'routes': match_routes,
+                'distance': match_distances
+            }
 
-    if bDistances:
-        return match_distances
+        if bRoutes and not bDistances:
+            nearest_facilities[fid] = match_routes
+
+        if bDistances and not bRoutes:
+            nearest_facilities[fid] = match_distances
+
+        # bar.update()
+        with lock:
+            bar.update()
+
+    with lock:
+        bar.close()
+
+    if connection is not None:
+        connection.send(nearest_facilities)
+    else:
+        return nearest_facilities
 
 
 def neareset_route_from_point(graph,

@@ -1,6 +1,7 @@
 import os
 import traceback
 from enum import Enum
+from multiprocessing.managers import BaseManager
 
 from Core.log4p import Log
 
@@ -37,3 +38,7 @@ def remove_temp_db(db_path):
             log.debug("删除临时文件数据库文件{}成功！".format(db_path))
     except:
         log.warning("删除临时文件数据库文件{}出错，可能是数据库文件被占用，请手动删除!".format(db_path))
+
+
+class QueueManager(BaseManager):
+    pass

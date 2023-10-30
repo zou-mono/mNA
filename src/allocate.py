@@ -1,30 +1,31 @@
 import csv
+import json
 import os, sys
 import traceback
 import random
-from multiprocessing import Pool, current_process, Manager
+from math import ceil
+from multiprocessing import Pool, current_process, Manager, Pipe, Process, freeze_support, RLock
 from time import time, strftime
 
 import pandas as pd
 from networkx import Graph
 from osgeo.ogr import Feature
 from pandas import DataFrame
+from pygments.lexers import math
 from tqdm import tqdm
 from osgeo import ogr
-from qgis._analysis import QgsVectorLayerDirector, QgsNetworkDistanceStrategy, QgsGraphBuilder, QgsGraphAnalyzer
-from qgis._core import QgsVectorLayer, QgsField, QgsPointXY, QgsWkbTypes, QgsSpatialIndex, QgsRectangle, \
-    QgsVectorFileWriter, QgsFeature, QgsProject, QgsGeometry, QgsLineString, QgsProviderRegistry, \
-    QgsAggregateCalculator, QgsFeatureRequest, QgsFields, QgsApplication
 from shapely import STRtree, Point
 from shapely.ops import nearest_points
+from multiprocessing import cpu_count
 
 from Core.DataFactory import workspaceFactory
 from Core.common import check_geom_type, check_field_type, get_centerPoints
-from Core.core import DataType
+from Core.core import DataType, QueueManager
 from Core.graph import create_graph_from_file, Direction, makeGraph
 from Core.log4p import Log, mTqdm
 from Core.utils_graph import graph_to_gdfs, _is_endpoint_of_edge
-from nearest_facilities import nearest_facilities_from_point, nearest_facilities_from_point2
+from nearest_facilities import nearest_facilities_from_point, \
+    nearest_facilities_from_point_worker
 from person import Person
 import networkx as nx
 
@@ -59,7 +60,8 @@ def allocate_from_layer(
         bothValue="",
         distance_tolerance=500,  # 从原始点到网络最近snap点的距离容差，如果超过说明该点无法到达网络，不进行计算
         defaultDirection=Direction.DirectionBoth,
-        out_type=0):
+        out_type=0,
+        cpu_core=1):
 
     start_time = time()
 
@@ -68,6 +70,9 @@ def allocate_from_layer(
     ds_target = None
     layer_start = None
     layer_target = None
+
+    if cpu_core <= 0 or cpu_core > cpu_count():
+        cpu_core = cpu_count()
 
     try:
         log.info("读取网络数据, 路径为{}...".format(network_path))
@@ -141,43 +146,65 @@ def allocate_from_layer(
         # o_max = max(G.nodes)
 
         nearest_facilities = {}  # 存储起始设施可达的目标设施
-        i = 0
-
-        # pool = Pool(processes=8)
-
-        # my_list = [1, 2, 3]
-        # my_list = [G]
-        # manager = Manager()
-        # shared_list = manager.list(my_list)
 
         log.info("计算起始设施可达范围的目标设施...")
 
-        result_list = []
-        # for fid, start_node in mTqdm(zip(start_points_df['fid'], start_points_df['nodeID']), total=start_points_df.shape[0]):
-        #     if start_node == -1:
-        #         continue
-        #     #
-        #     result_list.append(pool.apply_async(func, (start_node, [shared_list], )))
-        #
-        #     # result_list.append(pool.apply_async(nearest_facilities_from_point2,
-        #     #               args=(G, start_node, df, False, travelCost, True, )))
-        #
-        # pool.close()
-        # pool.join()
-        # #
-        # for res in result_list:
-        #     print(res.get())
+        if cpu_core == 1:
+            for fid, start_node in mTqdm(zip(start_points_df['fid'], start_points_df['nodeID']), total=start_points_df.shape[0]):
+                if start_node == -1:
+                    continue
 
-        for fid, start_node in mTqdm(zip(start_points_df['fid'], start_points_df['nodeID']), total=start_points_df.shape[0]):
-            if start_node == -1:
-                continue
+                nf = nearest_facilities_from_point(G, start_node, df,
+                                                                  bRoutes=False,
+                                                                  travelCost=travelCost)
 
-            nf = nearest_facilities_from_point2(G, start_node, df,
-                                                              bRoutes=False,
-                                                              travelCost=travelCost)
+                nearest_facilities[fid] = nf
+        else:
+            QueueManager.register('graphTransfer', GraphTransfer)
+            # conn1, conn2 = Pipe()
 
-            nearest_facilities[fid] = nf
+            with QueueManager() as manager:
+                shared_obj = manager.graphTransfer(G, df)
+                # value = shared_obj.shortest(start_node, travelCost)
+                lst = []
+                # processes = []
 
+                start_nodes = []
+                for fid, start_node in zip(start_points_df['fid'], start_points_df['nodeID']):
+                    if start_node == -1:
+                        continue
+                    start_nodes.append((start_node, fid))
+
+                n = ceil(len(start_nodes) / cpu_core)  # 数据按照CPU数量分块
+
+                tqdm.set_lock(RLock())
+                pool = Pool(processes=cpu_core, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
+
+                input_param = []
+                ipos = 0
+                for i in range(len(start_nodes)):
+                    lst.append(start_nodes[i])
+
+                    if (i + 1) % n == 0 or i == len(start_nodes) - 1:
+                        input_param.append((None, shared_obj, lst, travelCost, False, True, ipos))
+                        # processes.append(Process(target=nearest_facilities_from_point_worker,
+                        #                          args=(None, shared_obj, lst, travelCost, False, True)))
+                        lst = []
+                        ipos += 1
+
+                returns = pool.starmap(nearest_facilities_from_point_worker, input_param)
+                for res in returns:
+                    nearest_facilities.update(res)
+
+                # for proc in processes:
+                #     proc.start()
+                # for proc in processes:
+                #     nearest_facilities.update(conn2.recv())
+
+                # conn1.close()
+                # conn2.close()
+
+        print("\n")
         log.info("加载起始设施的个体数据...")
         # 把设施的人打乱后重新排序，保证公平性
         start_order_lst = list(range(0, start_capacity))
@@ -284,8 +311,7 @@ def allocate():
     pass
 
 
-def export_to_file(layer_name: str, capacity_dict: dict, fields: QgsFields, capacity_idx,
-                   layer_origin: QgsVectorLayer,
+def export_to_file(layer_name: str, capacity_dict: dict, capacity_idx,
                    out_path="res", out_type=DataType.shapefile.value):
     pass
 
@@ -332,17 +358,28 @@ def init_check(layer, capacity_field, suffix=""):
     return True, capacity, capacity_dict, capacity_idx
 
 
+class GraphTransfer:
+    def __init__(self, G, df):
+        self.G = G
+        self.df = df
+
+    def task(self):
+        return self.G, self.df
+
+
 if __name__ == '__main__':
+    freeze_support()
     allocate_from_layer(
         r"D:\空间模拟\mNA\Data\sz_road_cgcs2000_test.shp",
         r"D:\空间模拟\mNA\Data\building_test.shp",
         r"D:\空间模拟\mNA\Data\2022年现状幼儿园.shp",
-        travelCost=1000,
+        travelCost=3000,
         out_type=0,
         start_capacity_field="ZL3_5",
         target_capacity_field="学生数",
         target_weight_field="学校举",
-        direction_field="oneway")
+        direction_field="oneway",
+        cpu_core=-1)
 
     # allocate_from_layer(
     #     r"D:\空间模拟\PublicSupplyDemand\Data\sz_road_cgcs2000.shp",
@@ -353,5 +390,6 @@ if __name__ == '__main__':
     #     start_capacity_field="ZL3_5",
     #     target_capacity_field="学生数",
     #     target_weight_field="学校举",
-    #     direction_field="oneway")
+    #     direction_field="oneway",
+    #     cpu_core=-1)
 
