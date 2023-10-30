@@ -124,8 +124,6 @@ def nearest_facilities_from_point_worker(connection, shared_custom, lst, travelC
         fid = t[1]
         distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
                                                       cutoff=travelCost)
-        # print(routes)
-        # print(current_process().name + '-' + str(start_node))
 
         match_routes = {}
         match_distances = {}

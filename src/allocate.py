@@ -1,21 +1,19 @@
+import ast
+import copy
 import csv
+import click
 import json
 import os, sys
 import traceback
 import random
 from math import ceil
-from multiprocessing import Pool, current_process, Manager, Pipe, Process, freeze_support, RLock
+from multiprocessing import Pool, freeze_support, RLock
 from time import time, strftime
 
 import pandas as pd
 from networkx import Graph
 from osgeo.ogr import Feature
-from pandas import DataFrame
-from pygments.lexers import math
 from tqdm import tqdm
-from osgeo import ogr
-from shapely import STRtree, Point
-from shapely.ops import nearest_points
 from multiprocessing import cpu_count
 
 from Core.DataFactory import workspaceFactory
@@ -23,23 +21,94 @@ from Core.common import check_geom_type, check_field_type, get_centerPoints
 from Core.core import DataType, QueueManager
 from Core.graph import create_graph_from_file, Direction, makeGraph
 from Core.log4p import Log, mTqdm
-from Core.utils_graph import graph_to_gdfs, _is_endpoint_of_edge
 from nearest_facilities import nearest_facilities_from_point, \
     nearest_facilities_from_point_worker
 from person import Person
-import networkx as nx
 
 log = Log(__name__)
 
-seed = 1
-m = 1
-N = 1340//m
-# outer_G = nx.gnm_random_graph(N, int(1.7*N), seed)
-outer_G: Graph = None
+@click.command()
+@click.option("--network", '-n', type=str, required=True,
+              help="输入网络数据, 必选.")
+@click.option("--network-layer", type=str, required=False,
+              help="输入网络数据的图层名, 可选. 如果是文件数据库(mdb, gdb, sqlite等)则必须提供,"
+                   "如果是shapefile, geojson等文件格式则不需要提供.")
+@click.option("--direction-field", "-d", type=str, required=False, default="",
+              help="输入网络数据表示方向的字段, 可选."
+                   "如果网络数据需要表示有向边,则需要提供. 例如OSM数据中用'oneway'字段表示方向, 则输入'-d 'oneway''.")
+@click.option("--forward-value", type=str, required=False, default="",
+              help="输入网络数据方向字段中表示正向的值, 可选. "
+                   "如果网络数据需要表示有向边,则需要提供. 例如OSM数据中用'F'值表示正向，则输入'--forward-value 'F''.")
+@click.option("--backward-value", type=str, required=False, default="",
+              help="输入网络数据方向字段中表示反向的值, 可选. "
+                   "如果网络数据需要表示有向边,则需要提供. 例如OSM数据中用'T'值表示反向，则输入'--backward-value 'T''.")
+@click.option("--both-value", type=str, required=False, default="",
+              help="输入网络数据方向字段中表示双向的值, 可选. "
+                   "如果网络数据需要表示有向边,则需要提供. 例如OSM数据中用'B'值表示双方向，则输入'--both-value 'B''.")
+@click.option("--default-direction", type=int, required=False, default=0,
+              help="输入网络数据edge的默认方向, 可选. 当未提供方向字段或者方向字段中的方向值不存在时生效,用于提供edge的默认方向."
+                   "0-双向, 1-正向, 2-反向. ")
+@click.option("--spath", '-s', type=str, required=True,
+              help="输入起始设施数据, 必选.")
+@click.option("--spath-layer", type=str, required=False,
+              help="输入起始设施数据的图层名, 可选. 如果是文件数据库(mdb, gdb, sqlite等)则必须提供, "
+                   "如果是shapefile, geojson等文件格式则不需要提供.")
+@click.option("--scapacity-field", type=str, required=True,
+              help="输入起始设施数据的容量字段, 必选.")
+@click.option("--tpath", '-t', type=str, required=True,
+              help="输入目标设施数据, 必选.")
+@click.option("--tpath-layer", type=str, required=False, default="",
+              help="输入目标设施数据的图层名, 可选. 如果是文件数据库(mdb, gdb, sqlite等)则必须提供, "
+                   "如果是shapefile, geojson等文件格式则不需要提供.")
+@click.option("--tcapacity-field", type=str, required=True,
+              help="输入目标设施数据的容量字段, 必选.")
+# @click.option("--sweigth-field", type=str, required=True,
+#               help="输入起始设施数据的权重字段, 必选. 用于分配过程中提升设施的选取概率.")
+@click.option("--tweight-field", type=str, required=False, default="",
+              help="输入目标设施数据的权重字段, 可选. 用于分配过程中提升设施的选取概率;"
+                   "如果不提供,则所有目标设施选取权重根据距离的倒数来定义.")
+@click.option("--cost", "-c", type=float, required=False, multiple=True, default=[sys.float_info.max],
+              help="路径搜索范围, 超过范围的设施不计入搜索结果, 可选. 缺省值会将所有可达设施都加入结果,同时导致搜索速度极大下降, "
+                   "建议根据实际情况输入合适的范围."
+                   "允许输入多个值，例如'-c 1000 -c 1500'表示同时计算1000和1500两个范围的可达设施.")
+@click.option("--distance-tolerance", type=float, required=False, default=500,
+              help="定义目标设施到网络最近点的距离容差，如果超过说明该设施偏离网络过远，不参与计算, 可选, 默认值为500.")
+@click.option("--out-type", type=int, required=False, default=0,
+              help="输出文件格式, 默认值0. 0-ESRI Shapefile, 1-geojson, 3-fileGDB, 4-csv, 9-spatialite.")
+@click.option("--out-path", "-o", type=str, required=False, default="res",
+              help="输出目录名, 可选, 默认值为当前目录下的'res'.")
+@click.option("--cpu-count", type=int, required=False, default=1,
+              help="多进程数量, 可选, 默认为1, 即单进程. 小于0或者大于CPU最大核心数则进程数为最大核心数,否则为输入实际核心数.")
+def allocate(network, network_layer, direction_field, forward_value, backward_value, both_value,
+             default_direction, spath, spath_layer, scapacity_field, tpath, tpath_layer, tcapacity_field,
+             tweight_field, cost, distance_tolerance, out_type, out_path, cpu_count):
+    travelCost = list()
+    for c in cost:
+        if c in travelCost:
+            log.warning("cost参数存在重复值{}, 重复值不参与计算.".format(c))
+        else:
+            travelCost.append(c)
 
-test_num = 0
+    allocate_from_layer(network_path=network,
+                        start_path=spath,
+                        target_path=tpath,
+                        start_capacity_field=scapacity_field,
+                        target_capacity_field=tcapacity_field,
+                        network_layer=network_layer,
+                        start_layer_name=spath_layer,
+                        target_layer_name=tpath_layer,
+                        target_weight_field=tweight_field,
+                        travelCost=travelCost,
+                        direction_field=direction_field,
+                        forwardValue=forward_value,
+                        backwardValue=backward_value,
+                        bothValue=both_value,
+                        distance_tolerance=distance_tolerance,
+                        defaultDirection=default_direction,
+                        out_type=out_type,
+                        out_path=out_path,
+                        cpu_core=cpu_count)
 
-# outer_G: Graph = None
 
 def allocate_from_layer(
         network_path,
@@ -53,7 +122,7 @@ def allocate_from_layer(
         start_weight_field="",
         target_weight_field="",
         out_path="res",
-        travelCost=0.0,
+        travelCost=[sys.float_info.max],
         direction_field="",
         forwardValue="",
         backwardValue="",
@@ -149,6 +218,8 @@ def allocate_from_layer(
 
         log.info("计算起始设施可达范围的目标设施...")
 
+        max_cost = max(travelCost)
+
         if cpu_core == 1:
             for fid, start_node in mTqdm(zip(start_points_df['fid'], start_points_df['nodeID']), total=start_points_df.shape[0]):
                 if start_node == -1:
@@ -156,7 +227,7 @@ def allocate_from_layer(
 
                 nf = nearest_facilities_from_point(G, start_node, df,
                                                                   bRoutes=False,
-                                                                  travelCost=travelCost)
+                                                                  travelCost=max_cost)
 
                 nearest_facilities[fid] = nf
         else:
@@ -186,7 +257,7 @@ def allocate_from_layer(
                     lst.append(start_nodes[i])
 
                     if (i + 1) % n == 0 or i == len(start_nodes) - 1:
-                        input_param.append((None, shared_obj, lst, travelCost, False, True, ipos))
+                        input_param.append((None, shared_obj, lst, max_cost, False, True, ipos))
                         # processes.append(Process(target=nearest_facilities_from_point_worker,
                         #                          args=(None, shared_obj, lst, travelCost, False, True)))
                         lst = []
@@ -206,84 +277,25 @@ def allocate_from_layer(
 
         print("\n")
         log.info("加载起始设施的个体数据...")
-        # 把设施的人打乱后重新排序，保证公平性
-        start_order_lst = list(range(0, start_capacity))
-        random.shuffle(start_order_lst)
-
-        persons = []
-        i = 0
-        for fid, start_point, start_node in zip(start_points_df['fid'], start_points_df['geom'], start_points_df['nodeID']):
-            capacity = layer_start.GetFeature(fid).GetField(start_capacity_idx)
-            for p in range(capacity):
-                person = Person()
-                person.ID = start_order_lst[i]
-                person.facility = fid  # 所属设施的ID号
-                # person.location = start_point
-                # person.facility_order =
-                persons.append(person)
-
-                i += 1
-
-        persons = sorted(persons, key=lambda item: item.ID)
-
+        persons = load_persons(start_points_df, layer_start, start_capacity_idx, start_capacity)
         log.info("开始将起始设施的个体分配到可达范围的目标设施...")
+        for cost in travelCost:
+            start_dict = copy.deepcopy(start_capacity_dict)
+            target_dict = copy.deepcopy(target_capacity_dict)
 
-        for i in mTqdm(range(len(persons))):
-            person = persons[i]
-            # facility_order = person.facility_order
-            facility_id = person.facility
+            start_res,  target_res = allocate_capacity(persons, nearest_facilities,
+                                                       start_dict, target_dict,
+                                                       layer_target, target_weight_idx, cost)
 
-            idx = 0
-            weights = []
-            cand_ids = []  # 候选设施id
+            with open('../res/start_capacity_{}.csv'.format(cost), 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(start_res.keys())
+                writer.writerows([start_res.values()])
 
-            if facility_id not in nearest_facilities:
-                continue
-
-            nearest_distances = nearest_facilities[facility_id]
-
-            for target_id, cost in nearest_distances.items():
-                feature_target: Feature = layer_target.GetFeature(target_id)
-                target_capacity = target_capacity_dict[target_id]
-
-                # 只有当target设施还有余量时才参与选择，否则跳过
-                if target_capacity > 0:
-                    if feature_target.GetField(target_weight_idx) == "地级教育部门":
-                        w = 100
-                    elif feature_target.GetField(target_weight_idx) == "事业单位":
-                        w = 50
-                    else:
-                        if cost == 0:
-                            cost = 0.1
-                        w = 1 / cost
-
-                    weights.append(w)  # 选择概率为花费的倒数， 花费越小则概率越高
-                    cand_ids.append(target_id)
-
-                idx += 1
-
-            bChoice = False
-            choice_id = -1
-            if len(cand_ids) > 1:
-                bChoice = True
-                choice_id = random.choices(cand_ids, weights=weights)[0]
-            elif len(cand_ids) == 1:
-                bChoice = True
-                choice_id = cand_ids[0]
-
-            if bChoice:
-                target_capacity_dict[choice_id] = target_capacity_dict[choice_id] - 1
-                start_capacity_dict[facility_id] = start_capacity_dict[facility_id] - 1
-
-        with open('../res/start_capacity.csv', 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(start_capacity_dict.keys())
-            writer.writerows([start_capacity_dict.values()])
-
-        with open('../res/target_capacity.csv', 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(target_capacity_dict.keys())
-            writer.writerows([target_capacity_dict.values()])
+            with open('../res/target_capacity_{}.csv'.format(cost), 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(target_res.keys())
+                writer.writerows([target_res.values()])
 
         end_time = time()
         log.info("计算完成,共耗时{}秒".format(str(end_time - start_time)))
@@ -299,16 +311,79 @@ def allocate_from_layer(
         del wks
 
 
-# def func(msg, lst):
-#     G = lst[0]
-#     # return current_process().name + '-' + str(G[2])
-#     print(current_process().name + '-' + str(len(G[0].edges())))
-#     # return current_process().name + '-' + str(len(G.edges()))
-#     # return current_process().name + '-' + str(test_num)
+def load_persons(start_points_df, layer_start, start_capacity_idx, start_capacity):
+    # 把设施的人打乱后重新排序，保证公平性
+    start_order_lst = list(range(0, start_capacity))
+    random.shuffle(start_order_lst)
+
+    persons = []
+    i = 0
+    for fid, start_point, start_node in zip(start_points_df['fid'], start_points_df['geom'], start_points_df['nodeID']):
+        capacity = layer_start.GetFeature(fid).GetField(start_capacity_idx)
+        for p in range(capacity):
+            person = Person()
+            person.ID = start_order_lst[i]
+            person.facility = fid  # 所属设施的ID号
+            # person.location = start_point
+            # person.facility_order =
+            persons.append(person)
+
+            i += 1
+
+    persons = sorted(persons, key=lambda item: item.ID)
+
+    return persons
 
 
-def allocate():
-    pass
+def allocate_capacity(persons, nearest_facilities, start_capacity_dict, target_capacity_dict,
+                      layer_target, target_weight_idx, max_cost):
+
+    for i in mTqdm(range(len(persons))):
+        person = persons[i]
+        # facility_order = person.facility_order
+        facility_id = person.facility
+
+        weights = []
+        cand_ids = []  # 候选设施id
+
+        if facility_id not in nearest_facilities:
+            continue
+
+        nearest_distances = nearest_facilities[facility_id]
+
+        for target_id, cost in nearest_distances.items():
+            feature_target: Feature = layer_target.GetFeature(target_id)
+            target_capacity = target_capacity_dict[target_id]
+
+            if cost <= max_cost:
+                # 只有当target设施还有余量时才参与选择，否则跳过
+                if target_capacity > 0:
+                    if feature_target.GetField(target_weight_idx) == "地级教育部门":
+                        w = 100
+                    elif feature_target.GetField(target_weight_idx) == "事业单位":
+                        w = 50
+                    else:
+                        if cost == 0:
+                            cost = 0.1
+                        w = 1 / cost
+
+                    weights.append(w)  # 选择概率为花费的倒数， 花费越小则概率越高
+                    cand_ids.append(target_id)
+
+        bChoice = False
+        choice_id = -1
+        if len(cand_ids) > 1:
+            bChoice = True
+            choice_id = random.choices(cand_ids, weights=weights)[0]
+        elif len(cand_ids) == 1:
+            bChoice = True
+            choice_id = cand_ids[0]
+
+        if bChoice:
+            target_capacity_dict[choice_id] = target_capacity_dict[choice_id] - 1
+            start_capacity_dict[facility_id] = start_capacity_dict[facility_id] - 1
+
+    return start_capacity_dict, target_capacity_dict
 
 
 def export_to_file(layer_name: str, capacity_dict: dict, capacity_idx,
@@ -369,17 +444,18 @@ class GraphTransfer:
 
 if __name__ == '__main__':
     freeze_support()
-    allocate_from_layer(
-        r"D:\空间模拟\mNA\Data\sz_road_cgcs2000_test.shp",
-        r"D:\空间模拟\mNA\Data\building_test.shp",
-        r"D:\空间模拟\mNA\Data\2022年现状幼儿园.shp",
-        travelCost=3000,
-        out_type=0,
-        start_capacity_field="ZL3_5",
-        target_capacity_field="学生数",
-        target_weight_field="学校举",
-        direction_field="oneway",
-        cpu_core=-1)
+    allocate()
+    # allocate_from_layer(
+    #     r"D:\空间模拟\mNA\Data\sz_road_cgcs2000_test.shp",
+    #     r"D:\空间模拟\mNA\Data\building_test.shp",
+    #     r"D:\空间模拟\mNA\Data\2022年现状幼儿园.shp",
+    #     travelCost=(3000),
+    #     out_type=0,
+    #     start_capacity_field="ZL3_5",
+    #     target_capacity_field="学生数",
+    #     target_weight_field="学校举",
+    #     direction_field="oneway",
+    #     cpu_core=-1)
 
     # allocate_from_layer(
     #     r"D:\空间模拟\PublicSupplyDemand\Data\sz_road_cgcs2000.shp",
