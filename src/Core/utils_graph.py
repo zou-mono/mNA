@@ -3,7 +3,6 @@ import numpy as np
 from rtree import index
 from shapely import Point, LineString, distance, STRtree
 import geopandas as gpd
-from shapely.lib import Geometry
 from shapely.ops import nearest_points, split, snap
 
 from Core.log4p import Log

@@ -7,7 +7,7 @@ import os, sys
 import traceback
 import random
 from math import ceil
-from multiprocessing import Pool, freeze_support, RLock
+from multiprocessing import Pool, freeze_support, RLock, Lock
 from time import time, strftime
 
 import pandas as pd
@@ -26,6 +26,7 @@ from nearest_facilities import nearest_facilities_from_point, \
 from person import Person
 
 log = Log(__name__)
+lock = Lock()
 
 @click.command()
 @click.option("--network", '-n', type=str, required=True,
@@ -158,24 +159,25 @@ def allocate_from_layer(
 
         target_capacity_dict = {}  # 存储目标设施实时容量
         start_capacity_dict = {}  # 存储起始设施实时容量
-        # nodes, edges = graph_to_gdfs(net)
+
 
         log.info("读取起始设施数据,路径为{}...".format(start_path))
         ds_start = wks.get_ds(start_path)
         layer_start, start_layer_name = wks.get_layer(ds_start, start_path, start_layer_name)
         # layer_start = init_check(layer_start, start_capacity_field, "起始")
-        bflag, start_capacity, start_capacity_dict, start_capacity_idx = init_check(layer_start, start_capacity_field, "起始")
+        bflag, start_capacity, start_capacity_dict, start_capacity_idx, __ = \
+            init_check(layer_start, start_capacity_field, "起始")
         if not bflag:
             return
 
         log.info("读取目标设施数据,路径为{}...".format(target_path))
         ds_target = wks.get_ds(target_path)
         layer_target, target_layer_name = wks.get_layer(ds_target, target_path, target_layer_name)
-        bflag, target_capacity, target_capacity_dict, target_capacity_idx = init_check(layer_target, target_capacity_field, "目标")
+        target_weight_idx = layer_target.FindFieldIndex(target_weight_field, False)
+        bflag, target_capacity, target_capacity_dict, target_capacity_idx, target_weight_dict = \
+            init_check(layer_target, target_capacity_field, "目标", target_weight_idx)
         if not bflag:
             return
-
-        target_weight_idx = layer_target.FindFieldIndex(target_weight_field, False)
 
         #  提取中心点
         log.info("计算设施位置坐标...")
@@ -264,6 +266,9 @@ def allocate_from_layer(
                         ipos += 1
 
                 returns = pool.starmap(nearest_facilities_from_point_worker, input_param)
+                pool.close()
+                pool.join()
+
                 for res in returns:
                     nearest_facilities.update(res)
 
@@ -279,13 +284,12 @@ def allocate_from_layer(
         log.info("加载起始设施的个体数据...")
         persons = load_persons(start_points_df, layer_start, start_capacity_idx, start_capacity)
         log.info("开始将起始设施的个体分配到可达范围的目标设施...")
-        for cost in travelCost:
-            start_dict = copy.deepcopy(start_capacity_dict)
-            target_dict = copy.deepcopy(target_capacity_dict)
 
+        if len(travelCost) == 1:
+            cost = travelCost[0]
             start_res,  target_res = allocate_capacity(persons, nearest_facilities,
-                                                       start_dict, target_dict,
-                                                       layer_target, target_weight_idx, cost)
+                                                       start_capacity_dict, target_capacity_dict,
+                                                       target_weight_dict, cost)
 
             with open('../res/start_capacity_{}.csv'.format(cost), 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
@@ -296,6 +300,41 @@ def allocate_from_layer(
                 writer = csv.writer(csvfile)
                 writer.writerow(target_res.keys())
                 writer.writerows([target_res.values()])
+
+        else:
+            QueueManager.register('capacityTransfer', CapacityTransfer)
+            with QueueManager() as manager:
+                shared_obj = manager.capacityTransfer(persons)
+
+                process_num = len(travelCost)
+                tqdm.set_lock(RLock())
+                pool = Pool(processes=process_num, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
+
+                input_param = []
+                ipos = 0
+                for cost in travelCost:
+                    input_param.append((shared_obj, nearest_facilities, start_capacity_dict,
+                                        target_capacity_dict, target_weight_dict, cost, ipos))
+                    ipos += 1
+
+                returns = pool.starmap(allocate_capacity_worker, input_param)
+                pool.close()
+                pool.join()
+
+                for idx, res in enumerate(returns):
+                    cost = travelCost[idx]
+
+                    start_res = res[0]
+                    target_res = res[1]
+                    with open('../res/start_capacity_{}.csv'.format(cost), 'w', newline='') as csvfile:
+                        writer = csv.writer(csvfile)
+                        writer.writerow(start_res.keys())
+                        writer.writerows([start_res.values()])
+
+                    with open('../res/target_capacity_{}.csv'.format(cost), 'w', newline='') as csvfile:
+                        writer = csv.writer(csvfile)
+                        writer.writerow(target_res.keys())
+                        writer.writerows([target_res.values()])
 
         end_time = time()
         log.info("计算完成,共耗时{}秒".format(str(end_time - start_time)))
@@ -336,8 +375,7 @@ def load_persons(start_points_df, layer_start, start_capacity_idx, start_capacit
 
 
 def allocate_capacity(persons, nearest_facilities, start_capacity_dict, target_capacity_dict,
-                      layer_target, target_weight_idx, max_cost):
-
+                      target_weight_dict, max_cost):
     for i in mTqdm(range(len(persons))):
         person = persons[i]
         # facility_order = person.facility_order
@@ -352,15 +390,15 @@ def allocate_capacity(persons, nearest_facilities, start_capacity_dict, target_c
         nearest_distances = nearest_facilities[facility_id]
 
         for target_id, cost in nearest_distances.items():
-            feature_target: Feature = layer_target.GetFeature(target_id)
-            target_capacity = target_capacity_dict[target_id]
-
+            # feature_target: Feature = layer_target.GetFeature(target_id)
             if cost <= max_cost:
+                target_capacity = target_capacity_dict[target_id]
                 # 只有当target设施还有余量时才参与选择，否则跳过
                 if target_capacity > 0:
-                    if feature_target.GetField(target_weight_idx) == "地级教育部门":
+                    feature_weight = target_weight_dict[target_id]
+                    if feature_weight == "地级教育部门":
                         w = 100
-                    elif feature_target.GetField(target_weight_idx) == "事业单位":
+                    elif feature_weight == "事业单位":
                         w = 50
                     else:
                         if cost == 0:
@@ -386,12 +424,74 @@ def allocate_capacity(persons, nearest_facilities, start_capacity_dict, target_c
     return start_capacity_dict, target_capacity_dict
 
 
+def allocate_capacity_worker(shared_custom, nearest_facilities, start_capacity_dict, target_capacity_dict,
+                             target_weight_dict, max_cost, ipos):
+    persons = shared_custom.task()
+    print(len(persons))
+    with lock:
+        bar = mTqdm(len(persons), desc="worker-{}".format(ipos), position=ipos, leave=False)
+
+    for i in range(len(persons)):
+        person = persons[i]
+        # facility_order = person.facility_order
+        facility_id = person.facility
+
+        weights = []
+        cand_ids = []  # 候选设施id
+
+        if facility_id not in nearest_facilities:
+            continue
+
+        nearest_distances = nearest_facilities[facility_id]
+
+        for target_id, cost in nearest_distances.items():
+            # feature_target: Feature = layer_target.GetFeature(target_id)
+            if cost <= max_cost:
+                target_capacity = target_capacity_dict[target_id]
+                feature_weight = target_weight_dict[target_id]
+
+            # 只有当target设施还有余量时才参与选择，否则跳过
+                if target_capacity > 0:
+                    if feature_weight == "地级教育部门":
+                        w = 100
+                    elif feature_weight == "事业单位":
+                        w = 50
+                    else:
+                        if cost == 0:
+                            cost = 0.1
+                        w = 1 / cost
+
+                    weights.append(w)  # 选择概率为花费的倒数， 花费越小则概率越高
+                    cand_ids.append(target_id)
+
+        bChoice = False
+        choice_id = -1
+        if len(cand_ids) > 1:
+            bChoice = True
+            choice_id = random.choices(cand_ids, weights=weights)[0]
+        elif len(cand_ids) == 1:
+            bChoice = True
+            choice_id = cand_ids[0]
+
+        if bChoice:
+            target_capacity_dict[choice_id] = target_capacity_dict[choice_id] - 1
+            start_capacity_dict[facility_id] = start_capacity_dict[facility_id] - 1
+
+        with lock:
+            bar.update()
+
+    with lock:
+        bar.close()
+
+    return start_capacity_dict, target_capacity_dict
+
+
 def export_to_file(layer_name: str, capacity_dict: dict, capacity_idx,
                    out_path="res", out_type=DataType.shapefile.value):
     pass
 
 
-def init_check(layer, capacity_field, suffix=""):
+def init_check(layer, capacity_field, suffix="", target_weight_idx=-1):
     layer_name = layer.GetName()
 
     if not check_geom_type(layer):
@@ -412,11 +512,18 @@ def init_check(layer, capacity_field, suffix=""):
 
     capacity = 0
     capacity_dict = {}
+    weight_dict = {}
     layer.ResetReading()
     for feature in layer:
+        fid = feature.GetFID()
         v = feature.GetField(capacity_field)
-        capacity_dict[feature.GetFID()] = v
+        capacity_dict[fid] = v
         capacity = capacity + v
+
+        if target_weight_idx > 0:
+            weight = feature.GetField(target_weight_idx)
+            weight_dict[fid] = weight
+
     # exec_str = '''SELECT SUM("{}") FROM "{}" WHERE "{}" > 0'''.format(
     #     capacity_field, layer_name, capacity_field)
     # exec_res = ds.ExecuteSQL(exec_str)
@@ -430,7 +537,21 @@ def init_check(layer, capacity_field, suffix=""):
     log.info("{}设施总容量为{}".format(suffix, capacity))
     # ds.ReleaseResultSet(exec_res)
 
-    return True, capacity, capacity_dict, capacity_idx
+    return True, capacity, capacity_dict, capacity_idx, weight_dict
+
+
+class CapacityTransfer:
+    def __init__(self, persons):
+        self.persons = persons
+        # self.nearest_facilities = nearest_facilities
+        # self.start_dict = start_dict
+        # self.target_dict = target_dict
+        # self.target_weight_dict = target_weight_dict
+        # self.layer_target = layer_target
+
+    def task(self):
+        return self.persons
+        # return self.persons, self.nearest_facilities, self.start_dict, self.target_dict, self.target_weight_dict
 
 
 class GraphTransfer:

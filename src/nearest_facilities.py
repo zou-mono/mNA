@@ -117,7 +117,7 @@ def nearest_facilities_from_point_worker(connection, shared_custom, lst, travelC
 
     # mTqdm.set_lock(mTqdm.get_lock())
     with lock:
-        bar = mTqdm(lst, desc=current_process().name, position=ipos, leave=False)
+        bar = mTqdm(lst, desc="worker-{}".format(ipos), position=ipos, leave=False)
     # with mTqdm(lst, desc=current_process().name, position=ipos, leave=False) as bar:
     for t in lst:
         start_node = t[0]
