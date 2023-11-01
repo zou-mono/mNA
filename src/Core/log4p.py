@@ -4,6 +4,7 @@ import inspect
 import os
 import sys
 import time
+from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import warnings
@@ -39,6 +40,17 @@ log_colors_config = {
     'ERROR': 'red',
     'CRITICAL': 'red'
 }
+
+
+@contextmanager
+def tqdm_output(tqdm, write=sys.stderr.write):
+    def wrapper(message):
+        if message != '\n':
+            tqdm.clear()
+        write(message)
+        if '\n' in message:
+            tqdm.display()
+
 
 class mTqdm(tqdm):
     def __init__(self, iteration=None, ncols=100, desc=None, leave=True, position=0, total=None):

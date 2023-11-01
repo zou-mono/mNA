@@ -8,7 +8,7 @@ from shapely import STRtree
 from tqdm import tqdm
 
 from Core.common import resource_path, set_main_path
-from Core.log4p import Log, mTqdm
+from Core.log4p import Log, mTqdm, tqdm_output
 from colorama import Fore
 
 from Core.graph import makeGraph, Direction

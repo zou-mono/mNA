@@ -12,13 +12,14 @@ from time import time, strftime
 
 import pandas as pd
 from networkx import Graph
+from osgeo import ogr, gdal
 from osgeo.ogr import Feature
 from tqdm import tqdm
 from multiprocessing import cpu_count
 
 from Core.DataFactory import workspaceFactory
 from Core.common import check_geom_type, check_field_type, get_centerPoints
-from Core.core import DataType, QueueManager
+from Core.core import DataType, QueueManager, check_layer_name
 from Core.graph import create_graph_from_file, Direction, makeGraph
 from Core.log4p import Log, mTqdm
 from nearest_facilities import nearest_facilities_from_point, \
@@ -83,12 +84,12 @@ lock = Lock()
 def allocate(network, network_layer, direction_field, forward_value, backward_value, both_value,
              default_direction, spath, spath_layer, scapacity_field, tpath, tpath_layer, tcapacity_field,
              tweight_field, cost, distance_tolerance, out_type, out_path, cpu_count):
-    travelCost = list()
+    travelCosts = list()
     for c in cost:
-        if c in travelCost:
+        if c in travelCosts:
             log.warning("cost参数存在重复值{}, 重复值不参与计算.".format(c))
         else:
-            travelCost.append(c)
+            travelCosts.append(c)
 
     allocate_from_layer(network_path=network,
                         start_path=spath,
@@ -99,7 +100,7 @@ def allocate(network, network_layer, direction_field, forward_value, backward_va
                         start_layer_name=spath_layer,
                         target_layer_name=tpath_layer,
                         target_weight_field=tweight_field,
-                        travelCost=travelCost,
+                        travelCosts=travelCosts,
                         direction_field=direction_field,
                         forwardValue=forward_value,
                         backwardValue=backward_value,
@@ -123,7 +124,7 @@ def allocate_from_layer(
         start_weight_field="",
         target_weight_field="",
         out_path="res",
-        travelCost=[sys.float_info.max],
+        travelCosts=[sys.float_info.max],
         direction_field="",
         forwardValue="",
         backwardValue="",
@@ -156,10 +157,6 @@ def allocate_from_layer(
         if net is None:
             log.error("网络数据存在问题, 无法创建图结构")
             return
-
-        target_capacity_dict = {}  # 存储目标设施实时容量
-        start_capacity_dict = {}  # 存储起始设施实时容量
-
 
         log.info("读取起始设施数据,路径为{}...".format(start_path))
         ds_start = wks.get_ds(start_path)
@@ -200,27 +197,17 @@ def allocate_from_layer(
         all_points = start_points + target_points
 
         G, snapped_nodeIDs = makeGraph(net, all_points, distance_tolerance=distance_tolerance)
-        # G, snapped_target_nodeIDs = makeGraph(net, target_points, distance_tolerance=distance_tolerance)
-
-        # G, snapped_target_nodeIDs = makeGraph(net, all_points, distance_tolerance=distance_tolerance)
         target_points_df["nodeID"] = snapped_nodeIDs[len(start_points):]
         start_points_df["nodeID"] = snapped_nodeIDs[:len(start_points)]
 
         log.info("重构后的图共有{}条边，{}个节点".format(len(G.edges), len(G)))
-        # start_points = [Point([521915.7194, 2509312.8204])]
-        # start_points = [Point([520096, 2506194])]
-        # start_points = [Point([519112.9421, 2505711.571])]
         df = target_points_df[target_points_df["nodeID"] != -1]
-
-        # edge_geoms = list(nx.get_edge_attributes(G, "geometry").values())
-        # rtree = STRtree(edge_geoms)
-        # o_max = max(G.nodes)
 
         nearest_facilities = {}  # 存储起始设施可达的目标设施
 
         log.info("计算起始设施可达范围的目标设施...")
 
-        max_cost = max(travelCost)
+        max_cost = max(travelCosts)
 
         if cpu_core == 1:
             for fid, start_node in mTqdm(zip(start_points_df['fid'], start_points_df['nodeID']), total=start_points_df.shape[0]):
@@ -279,66 +266,84 @@ def allocate_from_layer(
 
                 # conn1.close()
                 # conn2.close()
-
         print("\n")
         log.info("加载起始设施的个体数据...")
         persons = load_persons(start_points_df, layer_start, start_capacity_idx, start_capacity)
         log.info("开始将起始设施的个体分配到可达范围的目标设施...")
 
-        if len(travelCost) == 1:
-            cost = travelCost[0]
-            start_res,  target_res = allocate_capacity(persons, nearest_facilities,
-                                                       start_capacity_dict, target_capacity_dict,
-                                                       target_weight_dict, cost)
+        # if len(travelCost) == 1:
+        #     cost = travelCost[0]
+        #     start_dict = copy.deepcopy(start_capacity_dict)
+        #     target_dict = copy.deepcopy(target_capacity_dict)
+        #
+        #     start_res,  target_res = allocate_capacity(persons, nearest_facilities,
+        #                                                start_capacity_dict, target_capacity_dict,
+        #                                                target_weight_dict, cost)
+        #
+        #     log.info("开始导出计算结果...")
+        #     out_path = os.path.join(out_path, "capacity_{}".format(strftime('%Y-%m-%d-%H-%M-%S')))
+        #     export_to_file(out_path, start_res, start_dict, cost, layer_start,
+        #                    layer_name="start_capacity", out_type=out_type)
+        #     export_to_file(out_path, target_res, target_dict, cost, layer_target,
+        #                    layer_name="target_capacity", out_type=out_type)
+        #
+        # else:
+        QueueManager.register('capacityTransfer', CapacityTransfer)
+        with QueueManager() as manager:
+            shared_obj = manager.capacityTransfer(persons)
 
-            with open('../res/start_capacity_{}.csv'.format(cost), 'w', newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(start_res.keys())
-                writer.writerows([start_res.values()])
+            process_num = len(travelCosts)
+            tqdm.set_lock(RLock())
+            pool = Pool(processes=process_num, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
 
-            with open('../res/target_capacity_{}.csv'.format(cost), 'w', newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(target_res.keys())
-                writer.writerows([target_res.values()])
+            input_param = []
+            ipos = 0
+            for cost in travelCosts:
+                input_param.append((shared_obj, nearest_facilities, start_capacity_dict,
+                                    target_capacity_dict, target_weight_dict, cost, ipos))
+                ipos += 1
 
-        else:
-            QueueManager.register('capacityTransfer', CapacityTransfer)
-            with QueueManager() as manager:
-                shared_obj = manager.capacityTransfer(persons)
+            returns = pool.starmap(allocate_capacity_worker, input_param)
+            pool.close()
+            pool.join()
 
-                process_num = len(travelCost)
-                tqdm.set_lock(RLock())
-                pool = Pool(processes=process_num, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
+            if len(returns) < 1:
+                raise ValueError("没有返回计算结果.")
 
-                input_param = []
-                ipos = 0
-                for cost in travelCost:
-                    input_param.append((shared_obj, nearest_facilities, start_capacity_dict,
-                                        target_capacity_dict, target_weight_dict, cost, ipos))
-                    ipos += 1
+            print("\n")
+            log.info("开始导出计算结果...")
+            out_path = os.path.join(out_path, "capacity_{}".format(strftime('%Y-%m-%d-%H-%M-%S')))
 
-                returns = pool.starmap(allocate_capacity_worker, input_param)
-                pool.close()
-                pool.join()
-
-                for idx, res in enumerate(returns):
-                    cost = travelCost[idx]
-
+            for idx, res in enumerate(returns):
+                if idx == 0:
                     start_res = res[0]
                     target_res = res[1]
-                    with open('../res/start_capacity_{}.csv'.format(cost), 'w', newline='') as csvfile:
-                        writer = csv.writer(csvfile)
-                        writer.writerow(start_res.keys())
-                        writer.writerows([start_res.values()])
+                    for k, v in start_res.items():
+                        start_res[k] = [v]
+                    for k, v in target_res.items():
+                        target_res[k] = [v]
+                    continue
 
-                    with open('../res/target_capacity_{}.csv'.format(cost), 'w', newline='') as csvfile:
-                        writer = csv.writer(csvfile)
-                        writer.writerow(target_res.keys())
-                        writer.writerows([target_res.values()])
+                cost = travelCosts[idx]
+
+                start_return = res[0]
+                target_return = res[1]
+
+                for k, v in start_return.items():
+                    start_res[k].extend([v])
+                for k, v in target_return.items():
+                    target_res[k].extend([v])
+
+            export_to_file(out_path, start_res, start_capacity_dict, travelCosts, layer_start,
+                           layer_name="start_capacity", out_type=out_type)
+            export_to_file(out_path, target_res, target_capacity_dict, travelCosts, layer_target,
+                           layer_name="target_capacity", out_type=out_type)
 
         end_time = time()
         log.info("计算完成,共耗时{}秒".format(str(end_time - start_time)))
         print("ok")
+    except ValueError as msg:
+        log.error(msg)
     except:
         log.error(traceback.format_exc())
         return
@@ -348,6 +353,108 @@ def allocate_from_layer(
         del layer_start
         del layer_target
         del wks
+
+
+def export_csv(out_path, layer_name, res, capacity_dict, costs):
+    try:
+        for idx, cost in enumerate(costs):
+            out_file = os.path.join(out_path, "{}_{}.csv".format(layer_name, cost))
+            with open(out_file, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['fid', 'used', 'remain'])
+                for key, value in res.items():
+                    capacity = capacity_dict[key]
+                    remain = value[idx]
+                    writer.writerow([key, capacity - remain, remain])
+
+        return True
+    except:
+        return False
+
+
+def export_to_file(out_path, res, capacity_dict, costs, in_layer=None, layer_name="", out_type=DataType.csv.value):
+    if not os.path.exists(out_path):
+        os.mkdir(out_path)
+
+    layer_name = check_layer_name(layer_name)
+
+    if out_type == DataType.csv.value:
+        if export_csv(out_path, layer_name, res, capacity_dict, costs):
+            return True
+        else:
+            return False
+
+    if in_layer is not None:
+        in_layer.SetAttributeFilter("")
+        in_layer.ResetReading()
+
+    # strDriverName = ""
+    # papszLCO = []
+    # layer_name = "{}_{}".format(layer_name, travelCosts)
+    # if out_type == DataType.shapefile.value:
+    #     strDriverName = "ESRI Shapefile"
+    #     papszLCO = ['ENCODING=UTF-8']
+    #     if not os.path.exists(out_path):
+    #         os.mkdir(out_path)
+    #     out_path = os.path.join(out_path, "{}.shp".format(layer_name))
+    # elif out_type == DataType.geojson.value:
+    #     strDriverName = "GeoJSON"
+    #     if not os.path.exists(out_path):
+    #         os.mkdir(out_path)
+    #     out_path = os.path.join(out_path, "{}.geojson".format(layer_name))
+    # elif out_type == DataType.fileGDB.value:
+    #     strDriverName = "FileGDB"
+    #     out_path = os.path.join(out_path, "{}.gdb".format(layer_name))
+    #     papszLCO = ['OVERWRITE=YES']
+    #     gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
+    # elif out_type == DataType.sqlite.value:
+    #     strDriverName = "SQLite"
+    #     out_path = os.path.join(out_path, "{}.sqlite".format(layer_name))
+    #
+    # oDriver = ogr.GetDriverByName(strDriverName)
+    # # 创建数据源
+    # oDS = oDriver.Open(out_path, 1)
+    # if oDS is None:
+    #     oDS = oDriver.CreateDataSource(out_path)
+    #
+    # # oLayer = oDS.CreateLayer(layer_name, srs=in_layer.GetSpatialRef(), geom_type=in_layer.GetGeomType(),
+    # #                          options=papszLCO)
+    #
+
+    # oLayer = oDS.CopyLayer(in_layer, layer_name, options=papszLCO)
+    # used_idx = oLayer.FindFieldIndex("used", False)
+    # if used_idx == -1:
+    #     new_field = ogr.FieldDefn("used", ogr.OFTInteger64)
+    #     oLayer.CreateField(new_field)
+    #     used_idx = oLayer.FindFieldIndex("used", False)
+    #
+    # remain_idx = oLayer.FindFieldIndex("remain", False)
+    # if remain_idx == -1:
+    #     new_field = ogr.FieldDefn("remain", ogr.OFTInteger64)
+    #     oLayer.CreateField(new_field)
+    #     remain_idx = oLayer.FindFieldIndex("remain", False)
+    #
+    # for feature in oLayer:
+    #     fid = feature.GetFID()
+    #     if fid in capacity_dict:
+    #         capacity = capacity_dict[fid]
+    #     else:
+    #         capacity = 0
+    #
+    #     if fid in res:
+    #         remain = res[fid]
+    #     else:
+    #         remain = 0
+    #
+    #     feature.SetField(used_idx, capacity - remain)
+    #     feature.SetField(remain_idx, remain)
+    #
+    #     oLayer.SetFeature(feature)
+    #
+    # oDS.Destroy()
+    # del oDS
+    # del oLayer
+    # del oDriver
 
 
 def load_persons(start_points_df, layer_start, start_capacity_idx, start_capacity):
@@ -427,9 +534,9 @@ def allocate_capacity(persons, nearest_facilities, start_capacity_dict, target_c
 def allocate_capacity_worker(shared_custom, nearest_facilities, start_capacity_dict, target_capacity_dict,
                              target_weight_dict, max_cost, ipos):
     persons = shared_custom.task()
-    print(len(persons))
+    # print(len(persons))
     with lock:
-        bar = mTqdm(len(persons), desc="worker-{}".format(ipos), position=ipos, leave=False)
+        bar = mTqdm(range(len(persons)), desc="worker-{}".format(ipos), position=ipos, leave=False)
 
     for i in range(len(persons)):
         person = persons[i]
@@ -486,11 +593,6 @@ def allocate_capacity_worker(shared_custom, nearest_facilities, start_capacity_d
     return start_capacity_dict, target_capacity_dict
 
 
-def export_to_file(layer_name: str, capacity_dict: dict, capacity_idx,
-                   out_path="res", out_type=DataType.shapefile.value):
-    pass
-
-
 def init_check(layer, capacity_field, suffix="", target_weight_idx=-1):
     layer_name = layer.GetName()
 
@@ -524,18 +626,7 @@ def init_check(layer, capacity_field, suffix="", target_weight_idx=-1):
             weight = feature.GetField(target_weight_idx)
             weight_dict[fid] = weight
 
-    # exec_str = '''SELECT SUM("{}") FROM "{}" WHERE "{}" > 0'''.format(
-    #     capacity_field, layer_name, capacity_field)
-    # exec_res = ds.ExecuteSQL(exec_str)
-    #
-    # if exec_res is not None:
-    #     capacity = exec_res.GetNextFeature().GetField(0)
-    # else:
-    #     log.error("无法统计{}设施总容量.".format(suffix))
-    #     return False
-
     log.info("{}设施总容量为{}".format(suffix, capacity))
-    # ds.ReleaseResultSet(exec_res)
 
     return True, capacity, capacity_dict, capacity_idx, weight_dict
 
@@ -565,6 +656,7 @@ class GraphTransfer:
 
 if __name__ == '__main__':
     freeze_support()
+    # gdal.SetConfigOption('CPL_LOG', 'NUL')
     allocate()
     # allocate_from_layer(
     #     r"D:\空间模拟\mNA\Data\sz_road_cgcs2000_test.shp",
