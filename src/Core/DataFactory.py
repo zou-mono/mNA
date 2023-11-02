@@ -6,6 +6,7 @@ from osgeo import ogr, osr
 # from UICore import fgdb, filegdbapi
 from osgeo.ogr import DataSource
 
+from Core import fgdb
 from Core.common import launderName
 from Core.log4p import Log
 from Core.core import DataType
@@ -47,15 +48,15 @@ class workspaceFactory(object):
             return None
         else:
             try:
-                # if self.driver == "fgdbapi":
-                #     gdb = fgdb.GeoDatabase()
-                #     bflag, err_msg = gdb.Open(file)
-                #     if not bflag:
-                #         raise Exception(err_msg)
-                #     else:
-                #         self.datasource = gdb
-                # else:
-                self.datasource = self.driver.Open(file, access)
+                if self.driver == "fgdbapi":
+                    gdb = fgdb.GeoDatabase()
+                    bflag, err_msg = gdb.Open(file)
+                    if not bflag:
+                        raise Exception(err_msg)
+                    else:
+                        self.datasource = gdb
+                else:
+                    self.datasource = self.driver.Open(file, access)
                 return self.datasource
             except Exception as e:
                 if self.driver == "fgdbapi":

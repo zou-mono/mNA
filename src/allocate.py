@@ -17,9 +17,12 @@ from osgeo.ogr import Feature
 from tqdm import tqdm
 from multiprocessing import cpu_count
 
+from Core import filegdbapi
 from Core.DataFactory import workspaceFactory
 from Core.common import check_geom_type, check_field_type, get_centerPoints
 from Core.core import DataType, QueueManager, check_layer_name
+from Core.fgdb import FieldType
+from Core.filegdbapi import FieldDef
 from Core.graph import create_graph_from_file, Direction, makeGraph
 from Core.log4p import Log, mTqdm
 from nearest_facilities import nearest_facilities_from_point, \
@@ -382,6 +385,7 @@ def export_csv(out_path, layer_name, res, capacity_dict, costs):
 def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, layer_name="", out_type=DataType.csv.value):
     out_ds = None
     out_layer = None
+    out_type_f = None
 
     try:
         if not os.path.exists(out_path):
@@ -405,84 +409,129 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
 
         datasetCreationOptions = []
         layerCreationOptions = []
+        limit = -1
         if out_type == DataType.shapefile.value:
             out_format = "ESRI Shapefile"
+            out_type_f = DataType.shapefile
             layerCreationOptions = ['ENCODING=UTF-8', "2GB_LIMIT=NO"]
             if not os.path.exists(out_path):
                 os.mkdir(out_path)
             out_path = os.path.join(out_path, "{}.shp".format(layer_name))
         elif out_type == DataType.geojson.value:
+            out_type_f = DataType.geojson
             out_format = "GeoJSON"
             if not os.path.exists(out_path):
                 os.mkdir(out_path)
             out_path = os.path.join(out_path, "{}.geojson".format(layer_name))
         elif out_type == DataType.fileGDB.value:
             out_format = "FileGDB"
+            out_type_f = DataType.fileGDB
             out_path = os.path.join(out_path, "{}.gdb".format(layer_name))
-            layerCreationOptions = ['OVERWRITE=YES', "FID=FID"]
+            layerCreationOptions = ["FID=FID"]
             gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
         elif out_type == DataType.sqlite.value:
             out_format = "SQLite"
+            out_type_f = DataType.sqlite
             datasetCreationOptions = ['SPATIALITE=YES']
             layerCreationOptions = ['SPATIAL_INDEX=NO']
+            gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
             out_path = os.path.join(out_path, "{}.sqlite".format(layer_name))
 
         translateOptions = gdal.VectorTranslateOptions(format=out_format, srcSRS=srs, dstSRS=srs, layers=[inlayername],
                                                        accessMode="overwrite", layerName=layer_name,
                                                        datasetCreationOptions=datasetCreationOptions,
+                                                       geometryType="PROMOTE_TO_MULTI",
+                                                       limit=limit,
                                                        layerCreationOptions=layerCreationOptions)
 
         if not gdal.VectorTranslate(out_path, in_path, options=translateOptions):
             return False
 
-        out_Driver = ogr.GetDriverByName(out_format)
-        out_ds = out_Driver.Open(out_path, 1)
-        out_layer = out_ds.GetLayer(layer_name)
+        if out_type_f == DataType.fileGDB:
+            out_type_f = DataType.FGDBAPI
+
+        # out_Driver = ogr.GetDriverByName(out_format)
+        wks = workspaceFactory().get_factory(out_type_f)
+        out_ds = wks.openFromFile(out_path, 1)
+        out_layer = out_ds.GetLayerByName(layer_name)
 
         remain_field_idx =[]
         for idx, cost in enumerate(costs):
             used_field_name = "used_{}".format(idx)
             used_idx = out_layer.FindFieldIndex(used_field_name, False)
             if used_idx == -1:
-                new_field = ogr.FieldDefn(used_field_name, ogr.OFTInteger64)
+                if out_type == DataType.fileGDB.value:
+                    new_field = FieldDef()
+                    new_field.SetName(used_field_name)
+                    new_field.SetType(FieldType.fieldTypeInteger.value)
+                else:
+                    new_field = ogr.FieldDefn(used_field_name, ogr.OFTInteger64)
+
                 out_layer.CreateField(new_field)
+                del new_field
                 # used_idx = out_layer.FindFieldIndex(used_field_name, False)
 
             remain_field_name = "remain_{}".format(idx)
             remain_idx = out_layer.FindFieldIndex(remain_field_name, False)
             if remain_idx == -1:
-                new_field = ogr.FieldDefn(remain_field_name, ogr.OFTInteger64)
+                if out_type == DataType.fileGDB.value:
+                    new_field = FieldDef()
+                    new_field.SetName(remain_field_name)
+                    new_field.SetType(FieldType.fieldTypeInteger.value)
+                else:
+                    new_field = ogr.FieldDefn(remain_field_name, ogr.OFTInteger64)
                 out_layer.CreateField(new_field)
                 remain_idx = out_layer.FindFieldIndex(remain_field_name, False)
                 remain_field_idx.append(remain_idx)
+                del new_field
+
+        if out_type == DataType.fileGDB.value:
+            out_layer.LoadOnlyMode(True)
+            out_layer.SetWriteLock()
 
         total_feature = out_layer.GetFeatureCount()
-        for feature in mTqdm(out_layer, total=total_feature):
-            fid = feature.GetFID()
 
-            for idx, cost in enumerate(costs):
-                if fid in capacity_dict:
-                    capacity = capacity_dict[fid]
-                else:
-                    capacity = 0
+        out_ds.StartTransaction(force=True)
+        # for feature in mTqdm(out_layer, total=total_feature):
+        with mTqdm(out_layer, total=total_feature) as bar:
+            feature = out_layer.GetNextFeature()
+            while feature:
+                fid = feature.GetFID()
 
-                if fid in res:
-                    remain = res[fid][idx]
-                else:
-                    remain = 0
+                for idx, cost in enumerate(costs):
+                    if fid in capacity_dict:
+                        capacity = capacity_dict[fid]
+                    else:
+                        capacity = 0
 
-                feature.SetField(remain_field_idx[idx] - 1, capacity - remain)
-                feature.SetField(remain_field_idx[idx], remain)
+                    if fid in res:
+                        remain = res[fid][idx]
+                    else:
+                        remain = 0
 
-            out_layer.SetFeature(feature)
+                    feature.SetField(remain_field_idx[idx] - 1, capacity - remain)
+                    feature.SetField(remain_field_idx[idx], remain)
 
+                out_layer.SetFeature(feature)
+                feature = out_layer.GetNextFeature()
+                bar.update()
+
+        out_ds.CommitTransaction()
+        out_ds.FlushCache()
         return True
     except:
         log.error(traceback.format_exc())
         return False
     finally:
-        if out_ds is not None:
-            out_ds.Destroy()
+        if out_type_f == DataType.FGDBAPI:
+            if out_layer is not None:
+                out_layer.LoadOnlyMode(False)
+                out_layer.FreeWriteLock()
+            out_ds.CloseTable(out_layer)
+            filegdbapi.CloseGeodatabase(out_ds)
+        else:
+            if out_ds is not None:
+                out_ds.Destroy()
         del out_ds
         del out_layer
 
