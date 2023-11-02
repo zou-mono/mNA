@@ -84,45 +84,6 @@ def create_graph_from_file(path,
         if simplify:
             G = simplify_graph(G)
 
-        # strDriverName = "ESRI Shapefile"
-        # oDriver = ogr.GetDriverByName(strDriverName)
-        # if oDriver == None:
-        #     return "驱动不可用："+strDriverName
-        # # 创建数据源
-        # oDS = oDriver.CreateDataSource("nodes.shp")
-        # if oDS == None:
-        #     return "创建文件失败：points.shp"
-        # # 创建一个多边形图层，指定坐标系为WGS84
-        # papszLCO = []
-        # # geosrs = osr.SpatialReference()
-        # # geosrs.SetWellKnownGeogCS("WGS84")
-        # # 线：ogr_type = ogr.wkbLineString
-        # # 点：ogr_type = ogr.wkbPoint
-        # ogr_type = ogr.wkbPoint
-        # # 面的类型为Polygon，线的类型为Polyline，点的类型为Point
-        # oLayer = oDS.CreateLayer("nodes", crs, ogr_type, papszLCO)
-        # if oLayer == None:
-        #     return "图层创建失败！"
-        #
-        # # 创建id字段
-        # oId = ogr.FieldDefn("id", ogr.OFTInteger)
-        # oLayer.CreateField(oId, 1)
-        # # 创建name字段
-        # oName = ogr.FieldDefn("name", ogr.OFTString)
-        # oLayer.CreateField(oName, 1)
-        # oDefn = oLayer.GetLayerDefn()
-        #
-        # for node in G.nodes.data():
-        #     oFeaturePolygon = ogr.Feature(oDefn)
-        #     v = node[1]
-        #     point = ogr.Geometry(ogr.wkbPoint)
-        #     point.AddPoint(v['x'], v['y'])
-        #     oFeaturePolygon.SetGeometry(point)
-        #     oFeaturePolygon.SetField('id', node[0])
-        #     oLayer.CreateFeature(oFeaturePolygon)
-        #
-        # # 创建完成后，关闭进程
-        # oDS.Destroy()
         if bNodes and bPaths:
             return G, nodes, paths
 

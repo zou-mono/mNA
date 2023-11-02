@@ -289,6 +289,7 @@ def allocate_from_layer(
         #
         # else:
         QueueManager.register('capacityTransfer', CapacityTransfer)
+        bflag1 = bflag2 = False
         with QueueManager() as manager:
             shared_obj = manager.capacityTransfer(persons)
 
@@ -324,7 +325,7 @@ def allocate_from_layer(
                         target_res[k] = [v]
                     continue
 
-                cost = travelCosts[idx]
+                # cost = travelCosts[idx]
 
                 start_return = res[0]
                 target_return = res[1]
@@ -334,18 +335,24 @@ def allocate_from_layer(
                 for k, v in target_return.items():
                     target_res[k].extend([v])
 
-            export_to_file(out_path, start_res, start_capacity_dict, travelCosts, layer_start,
+            log.debug("正在导出起始设施分配结果...")
+            bflag1 = export_to_file(start_path, out_path, start_res, start_capacity_dict, travelCosts, layer_start,
                            layer_name="start_capacity", out_type=out_type)
-            export_to_file(out_path, target_res, target_capacity_dict, travelCosts, layer_target,
+            log.debug("正在导出目标设施分配结果...")
+            bflag2 = export_to_file(target_path, out_path, target_res, target_capacity_dict, travelCosts, layer_target,
                            layer_name="target_capacity", out_type=out_type)
 
         end_time = time()
-        log.info("计算完成,共耗时{}秒".format(str(end_time - start_time)))
-        print("ok")
+
+        if bflag1 and bflag2:
+            log.info("计算完成, 结果保存在:{}, 共耗时{}秒".format(os.path.abspath(out_path), str(end_time - start_time)))
+        else:
+            log.error("计算未完成, 请查看日志: {}.".format(os.path.abspath(log.logName)))
     except ValueError as msg:
         log.error(msg)
     except:
         log.error(traceback.format_exc())
+        log.error("计算未完成, 请查看日志: {}.".format(os.path.abspath(log.logName)))
         return
     finally:
         del ds_start
@@ -372,89 +379,112 @@ def export_csv(out_path, layer_name, res, capacity_dict, costs):
         return False
 
 
-def export_to_file(out_path, res, capacity_dict, costs, in_layer=None, layer_name="", out_type=DataType.csv.value):
-    if not os.path.exists(out_path):
-        os.mkdir(out_path)
+def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, layer_name="", out_type=DataType.csv.value):
+    out_ds = None
+    out_layer = None
 
-    layer_name = check_layer_name(layer_name)
+    try:
+        if not os.path.exists(out_path):
+            os.mkdir(out_path)
 
-    if out_type == DataType.csv.value:
-        if export_csv(out_path, layer_name, res, capacity_dict, costs):
-            return True
-        else:
+        layer_name = check_layer_name(layer_name)
+
+        if out_type == DataType.csv.value:
+            if export_csv(out_path, layer_name, res, capacity_dict, costs):
+                return True
+            else:
+                return False
+
+        if in_layer is not None:
+            in_layer.SetAttributeFilter("")
+            in_layer.ResetReading()
+
+        out_format = ""
+        srs = in_layer.GetSpatialRef()
+        inlayername = in_layer.GetName()
+
+        datasetCreationOptions = []
+        layerCreationOptions = []
+        if out_type == DataType.shapefile.value:
+            out_format = "ESRI Shapefile"
+            layerCreationOptions = ['ENCODING=UTF-8', "2GB_LIMIT=NO"]
+            if not os.path.exists(out_path):
+                os.mkdir(out_path)
+            out_path = os.path.join(out_path, "{}.shp".format(layer_name))
+        elif out_type == DataType.geojson.value:
+            out_format = "GeoJSON"
+            if not os.path.exists(out_path):
+                os.mkdir(out_path)
+            out_path = os.path.join(out_path, "{}.geojson".format(layer_name))
+        elif out_type == DataType.fileGDB.value:
+            out_format = "FileGDB"
+            out_path = os.path.join(out_path, "{}.gdb".format(layer_name))
+            layerCreationOptions = ['OVERWRITE=YES', "FID=FID"]
+            gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
+        elif out_type == DataType.sqlite.value:
+            out_format = "SQLite"
+            datasetCreationOptions = ['SPATIALITE=YES']
+            layerCreationOptions = ['SPATIAL_INDEX=NO']
+            out_path = os.path.join(out_path, "{}.sqlite".format(layer_name))
+
+        translateOptions = gdal.VectorTranslateOptions(format=out_format, srcSRS=srs, dstSRS=srs, layers=[inlayername],
+                                                       accessMode="overwrite", layerName=layer_name,
+                                                       datasetCreationOptions=datasetCreationOptions,
+                                                       layerCreationOptions=layerCreationOptions)
+
+        if not gdal.VectorTranslate(out_path, in_path, options=translateOptions):
             return False
 
-    if in_layer is not None:
-        in_layer.SetAttributeFilter("")
-        in_layer.ResetReading()
+        out_Driver = ogr.GetDriverByName(out_format)
+        out_ds = out_Driver.Open(out_path, 1)
+        out_layer = out_ds.GetLayer(layer_name)
 
-    # strDriverName = ""
-    # papszLCO = []
-    # layer_name = "{}_{}".format(layer_name, travelCosts)
-    # if out_type == DataType.shapefile.value:
-    #     strDriverName = "ESRI Shapefile"
-    #     papszLCO = ['ENCODING=UTF-8']
-    #     if not os.path.exists(out_path):
-    #         os.mkdir(out_path)
-    #     out_path = os.path.join(out_path, "{}.shp".format(layer_name))
-    # elif out_type == DataType.geojson.value:
-    #     strDriverName = "GeoJSON"
-    #     if not os.path.exists(out_path):
-    #         os.mkdir(out_path)
-    #     out_path = os.path.join(out_path, "{}.geojson".format(layer_name))
-    # elif out_type == DataType.fileGDB.value:
-    #     strDriverName = "FileGDB"
-    #     out_path = os.path.join(out_path, "{}.gdb".format(layer_name))
-    #     papszLCO = ['OVERWRITE=YES']
-    #     gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
-    # elif out_type == DataType.sqlite.value:
-    #     strDriverName = "SQLite"
-    #     out_path = os.path.join(out_path, "{}.sqlite".format(layer_name))
-    #
-    # oDriver = ogr.GetDriverByName(strDriverName)
-    # # 创建数据源
-    # oDS = oDriver.Open(out_path, 1)
-    # if oDS is None:
-    #     oDS = oDriver.CreateDataSource(out_path)
-    #
-    # # oLayer = oDS.CreateLayer(layer_name, srs=in_layer.GetSpatialRef(), geom_type=in_layer.GetGeomType(),
-    # #                          options=papszLCO)
-    #
+        remain_field_idx =[]
+        for idx, cost in enumerate(costs):
+            used_field_name = "used_{}".format(idx)
+            used_idx = out_layer.FindFieldIndex(used_field_name, False)
+            if used_idx == -1:
+                new_field = ogr.FieldDefn(used_field_name, ogr.OFTInteger64)
+                out_layer.CreateField(new_field)
+                # used_idx = out_layer.FindFieldIndex(used_field_name, False)
 
-    # oLayer = oDS.CopyLayer(in_layer, layer_name, options=papszLCO)
-    # used_idx = oLayer.FindFieldIndex("used", False)
-    # if used_idx == -1:
-    #     new_field = ogr.FieldDefn("used", ogr.OFTInteger64)
-    #     oLayer.CreateField(new_field)
-    #     used_idx = oLayer.FindFieldIndex("used", False)
-    #
-    # remain_idx = oLayer.FindFieldIndex("remain", False)
-    # if remain_idx == -1:
-    #     new_field = ogr.FieldDefn("remain", ogr.OFTInteger64)
-    #     oLayer.CreateField(new_field)
-    #     remain_idx = oLayer.FindFieldIndex("remain", False)
-    #
-    # for feature in oLayer:
-    #     fid = feature.GetFID()
-    #     if fid in capacity_dict:
-    #         capacity = capacity_dict[fid]
-    #     else:
-    #         capacity = 0
-    #
-    #     if fid in res:
-    #         remain = res[fid]
-    #     else:
-    #         remain = 0
-    #
-    #     feature.SetField(used_idx, capacity - remain)
-    #     feature.SetField(remain_idx, remain)
-    #
-    #     oLayer.SetFeature(feature)
-    #
-    # oDS.Destroy()
-    # del oDS
-    # del oLayer
-    # del oDriver
+            remain_field_name = "remain_{}".format(idx)
+            remain_idx = out_layer.FindFieldIndex(remain_field_name, False)
+            if remain_idx == -1:
+                new_field = ogr.FieldDefn(remain_field_name, ogr.OFTInteger64)
+                out_layer.CreateField(new_field)
+                remain_idx = out_layer.FindFieldIndex(remain_field_name, False)
+                remain_field_idx.append(remain_idx)
+
+        total_feature = out_layer.GetFeatureCount()
+        for feature in mTqdm(out_layer, total=total_feature):
+            fid = feature.GetFID()
+
+            for idx, cost in enumerate(costs):
+                if fid in capacity_dict:
+                    capacity = capacity_dict[fid]
+                else:
+                    capacity = 0
+
+                if fid in res:
+                    remain = res[fid][idx]
+                else:
+                    remain = 0
+
+                feature.SetField(remain_field_idx[idx] - 1, capacity - remain)
+                feature.SetField(remain_field_idx[idx], remain)
+
+            out_layer.SetFeature(feature)
+
+        return True
+    except:
+        log.error(traceback.format_exc())
+        return False
+    finally:
+        if out_ds is not None:
+            out_ds.Destroy()
+        del out_ds
+        del out_layer
 
 
 def load_persons(start_points_df, layer_start, start_capacity_idx, start_capacity):

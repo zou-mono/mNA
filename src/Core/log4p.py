@@ -52,6 +52,14 @@ def tqdm_output(tqdm, write=sys.stderr.write):
             tqdm.display()
 
 
+def progress_callback(complete, message, unknown):
+    # Calculate percent by integer values (1, 2, ..., 100)
+    if int(complete * 100) % 20 == 0:
+        percent = int(complete * 100)
+        print("{}%".format(percent))
+    return 1
+
+
 class mTqdm(tqdm):
     def __init__(self, iteration=None, ncols=100, desc=None, leave=True, position=0, total=None):
         super(mTqdm, self).__init__(
