@@ -104,7 +104,10 @@ def allocate(network, network_layer, direction_field, forward_value, backward_va
     elif out_type.lower() == 'csv':
         out_type = DataType.csv.value
 
-    out_path = os.path.join(out_path, "allocate_res_{}".format(strftime('%Y-%m-%d-%H-%M-%S')))
+    if not os.path.exists(out_path):
+        os.mkdir(out_path)
+
+    out_path = os.path.abspath(os.path.join(out_path, "allocate_res_{}".format(strftime('%Y-%m-%d-%H-%M-%S'))))
     if not os.path.exists(out_path):
         os.mkdir(out_path)
 
