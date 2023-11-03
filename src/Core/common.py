@@ -1,6 +1,6 @@
 import os
 
-from future.moves import sys
+import sys
 from osgeo.ogr import Layer, GeometryTypeToName, FieldDefn, Feature, Geometry
 from osgeo import ogr
 from shapely import Point

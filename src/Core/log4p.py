@@ -250,8 +250,11 @@ class Log:
         self.logger.addHandler(fh)
 
         # 创建一个StreamHandler,用于输出到控制台
+        # formatter = colorlog.ColoredFormatter(
+        #     '%(log_color)s[%(asctime)s] [%(filename)s:%(funcName)s:%(lineno)d] [%(levelname)s]- %(message)s',
+        #     log_colors=log_colors_config)  # 日志输出格式
         formatter = colorlog.ColoredFormatter(
-            '%(log_color)s[%(asctime)s] [%(filename)s:%(funcName)s:%(lineno)d] [%(levelname)s]- %(message)s',
+            '%(log_color)s[%(asctime)s] [%(levelname)s]- %(message)s',
             log_colors=log_colors_config)  # 日志输出格式
         ch = colorlog.StreamHandler()
         ch.setLevel(logging.DEBUG)
