@@ -1,8 +1,6 @@
-import ast
-import copy
+import pickle
 import csv
 import click
-import json
 import os, sys
 import traceback
 import random
@@ -10,10 +8,8 @@ from math import ceil
 from multiprocessing import Pool, freeze_support, RLock, Lock
 from time import time, strftime
 
-import pandas as pd
-from networkx import Graph
 from osgeo import ogr, gdal
-from osgeo.ogr import Feature
+
 from tqdm import tqdm
 from multiprocessing import cpu_count
 
@@ -78,8 +74,11 @@ lock = Lock()
                    "允许输入多个值，例如'-c 1000 -c 1500'表示同时计算1000和1500两个范围的可达设施.")
 @click.option("--distance-tolerance", type=float, required=False, default=500,
               help="定义目标设施到网络最近点的距离容差，如果超过说明该设施偏离网络过远，不参与计算, 可选, 默认值为500.")
-@click.option("--out-type", type=int, required=False, default=0,
-              help="输出文件格式, 默认值0. 0-ESRI Shapefile, 1-geojson, 3-fileGDB, 4-csv, 9-spatialite.")
+@click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite', 'csv'], case_sensitive=False),
+              required=False, default='shp',
+              help="输出文件格式, 默认值shp. shp-ESRI Shapefile, geojson-geojson, filegdb-ESRI FileGDB, "
+                   "sqlite-spatialite, csv-csv.")
+# 0-ESRI Shapefile, 1-geojson, 2-fileGDB, 3-spatialite, 4-csv
 @click.option("--out-path", "-o", type=str, required=False, default="res",
               help="输出目录名, 可选, 默认值为当前目录下的'res'.")
 @click.option("--cpu-count", type=int, required=False, default=1,
@@ -93,6 +92,21 @@ def allocate(network, network_layer, direction_field, forward_value, backward_va
             log.warning("cost参数存在重复值{}, 重复值不参与计算.".format(c))
         else:
             travelCosts.append(c)
+
+    if out_type.lower() == 'shp':
+        out_type = DataType.shapefile.value
+    elif out_type.lower() == 'geojson':
+        out_type = DataType.geojson.value
+    elif out_type.lower() == 'filegdb':
+        out_type = DataType.fileGDB.value
+    elif out_type.lower() == 'sqlite':
+        out_type = DataType.sqlite.value
+    elif out_type.lower() == 'csv':
+        out_type = DataType.csv.value
+
+    out_path = os.path.join(out_path, "allocate_res_{}".format(strftime('%Y-%m-%d-%H-%M-%S')))
+    if not os.path.exists(out_path):
+        os.mkdir(out_path)
 
     allocate_from_layer(network_path=network,
                         start_path=spath,
@@ -160,6 +174,11 @@ def allocate_from_layer(
         if net is None:
             log.error("网络数据存在问题, 无法创建图结构")
             return
+
+        out_net_path = os.path.abspath(os.path.join(out_path, "network.gpickle"))
+        with open(out_net_path, 'wb') as f:
+            pickle.dump(net, f, pickle.HIGHEST_PROTOCOL)
+        log.debug("网络数据保存至{}".format(out_net_path))
 
         log.info("读取起始设施数据,路径为{}...".format(start_path))
         ds_start = wks.get_ds(start_path)
@@ -269,7 +288,8 @@ def allocate_from_layer(
 
                 # conn1.close()
                 # conn2.close()
-        print("\n")
+        # print("\r")
+        tqdm.write("\r", end="")
         log.info("加载起始设施的个体数据...")
         persons = load_persons(start_points_df, layer_start, start_capacity_idx, start_capacity)
         log.info("开始将起始设施的个体分配到可达范围的目标设施...")
@@ -314,9 +334,8 @@ def allocate_from_layer(
             if len(returns) < 1:
                 raise ValueError("没有返回计算结果.")
 
-            print("\n")
+            tqdm.write("\r", end="")
             log.info("开始导出计算结果...")
-            out_path = os.path.join(out_path, "capacity_{}".format(strftime('%Y-%m-%d-%H-%M-%S')))
 
             for idx, res in enumerate(returns):
                 if idx == 0:
@@ -388,9 +407,6 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
     out_type_f = None
 
     try:
-        if not os.path.exists(out_path):
-            os.mkdir(out_path)
-
         layer_name = check_layer_name(layer_name)
 
         if out_type == DataType.csv.value:
@@ -735,8 +751,9 @@ class GraphTransfer:
 
 if __name__ == '__main__':
     freeze_support()
-    # gdal.SetConfigOption('CPL_LOG', 'NUL')
+    gdal.SetConfigOption('CPL_LOG', 'NUL')
     allocate()
+
     # allocate_from_layer(
     #     r"D:\空间模拟\mNA\Data\sz_road_cgcs2000_test.shp",
     #     r"D:\空间模拟\mNA\Data\building_test.shp",

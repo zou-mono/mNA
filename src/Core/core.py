@@ -12,15 +12,15 @@ log = Log(__name__)
 class DataType(Enum):
     shapefile = 0
     geojson = 1
-    cad_dwg = 2
-    fileGDB = 3
+    fileGDB = 2
+    sqlite = 3
     csv = 4
     xlsx = 5
     dbf = 6
     memory = 7
     openFileGDB = 8
-    sqlite = 9
-    FGDBAPI = 10
+    FGDBAPI = 9
+    cad_dwg = 10
 
 
 DataType_dict = {

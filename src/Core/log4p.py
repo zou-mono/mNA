@@ -4,7 +4,6 @@ import inspect
 import os
 import sys
 import time
-from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import warnings
@@ -42,14 +41,14 @@ log_colors_config = {
 }
 
 
-@contextmanager
-def tqdm_output(tqdm, write=sys.stderr.write):
-    def wrapper(message):
-        if message != '\n':
-            tqdm.clear()
-        write(message)
-        if '\n' in message:
-            tqdm.display()
+# @contextmanager
+# def tqdm_output(tqdm, write=sys.stderr.write):
+#     def wrapper(message):
+#         if message != '\n':
+#             tqdm.clear()
+#         write(message)
+#         if '\n' in message:
+#             tqdm.display()
 
 
 def progress_callback(complete, message, unknown):

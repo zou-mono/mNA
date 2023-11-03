@@ -13,7 +13,7 @@ from shapely.wkt import loads
 
 from Core.common import check_line_type
 from Core.simplification import simplify_graph
-from Core.utils_graph import get_largest_component, add_edge_lengths, graph_to_gdfs, _is_endpoint_of_edge, \
+from Core.utils_graph import get_largest_component, add_edge_lengths, _is_endpoint_of_edge, \
     split_line_by_point, is_projectPoint_in_segment
 from Core.DataFactory import workspaceFactory
 from Core.log4p import Log, mTqdm
