@@ -14,12 +14,12 @@ from tqdm import tqdm
 from multiprocessing import cpu_count
 
 from Core import filegdbapi
-from Core.DataFactory import workspaceFactory
+from Core.DataFactory import workspaceFactory, get_suffix
 from Core.common import check_geom_type, check_field_type, get_centerPoints
 from Core.core import DataType, QueueManager, check_layer_name
 from Core.fgdb import FieldType
 from Core.filegdbapi import FieldDef
-from Core.graph import create_graph_from_file, Direction, makeGraph
+from Core.graph import create_graph_from_file, Direction, makeGraph, export_network_to_graph, import_graph_to_network
 from Core.log4p import Log, mTqdm
 from nearest_facilities import nearest_facilities_from_point, \
     nearest_facilities_from_point_worker
@@ -30,10 +30,11 @@ lock = Lock()
 
 @click.command()
 @click.option("--network", '-n', type=str, required=True,
-              help="输入网络数据, 必选.")
+              help="输入网络数据, 支持的格式包括ESRI Shapefile, geojson, ESRI FileGDB, Spatilite, "
+                   "gpickle, GEXF, GML, GraphML. 必选.")
 @click.option("--network-layer", type=str, required=False,
-              help="输入网络数据的图层名, 可选. 如果是文件数据库(mdb, gdb, sqlite等)则必须提供,"
-                   "如果是shapefile, geojson等文件格式则不需要提供.")
+              help="输入网络数据的图层名, 可选. 如果是文件数据库(gdb, sqlite)则必须提供,"
+                   "如果是文件(shapefile, geojson)则不需要提供.")
 @click.option("--direction-field", "-d", type=str, required=False, default="",
               help="输入网络数据表示方向的字段, 可选."
                    "如果网络数据需要表示有向边,则需要提供. 例如OSM数据中用'oneway'字段表示方向, 则输入'-d 'oneway''.")
@@ -52,15 +53,15 @@ lock = Lock()
 @click.option("--spath", '-s', type=str, required=True,
               help="输入起始设施数据, 必选.")
 @click.option("--spath-layer", type=str, required=False,
-              help="输入起始设施数据的图层名, 可选. 如果是文件数据库(mdb, gdb, sqlite等)则必须提供, "
-                   "如果是shapefile, geojson等文件格式则不需要提供.")
+              help="输入起始设施数据的图层名, 可选. 如果是文件数据库(gdb, sqlite)则必须提供, "
+                   "如果是文件(shapefile, geojson)则不需要提供.")
 @click.option("--scapacity-field", type=str, required=True,
               help="输入起始设施数据的容量字段, 必选.")
 @click.option("--tpath", '-t', type=str, required=True,
               help="输入目标设施数据, 必选.")
 @click.option("--tpath-layer", type=str, required=False, default="",
-              help="输入目标设施数据的图层名, 可选. 如果是文件数据库(mdb, gdb, sqlite等)则必须提供, "
-                   "如果是shapefile, geojson等文件格式则不需要提供.")
+              help="输入目标设施数据的图层名, 可选. 如果是文件数据库(gdb, sqlite)则必须提供, "
+                   "如果是文件(shapefile, geojson)则不需要提供.")
 @click.option("--tcapacity-field", type=str, required=True,
               help="输入目标设施数据的容量字段, 必选.")
 # @click.option("--sweigth-field", type=str, required=True,
@@ -76,8 +77,12 @@ lock = Lock()
               help="定义目标设施到网络最近点的距离容差，如果超过说明该设施偏离网络过远，不参与计算, 可选, 默认值为500.")
 @click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite', 'csv'], case_sensitive=False),
               required=False, default='shp',
-              help="输出文件格式, 默认值shp. shp-ESRI Shapefile, geojson-geojson, filegdb-ESRI FileGDB, "
+              help="输出文件格式, 默认值shp. 支持格式shp-ESRI Shapefile, geojson-geojson, filegdb-ESRI FileGDB, "
                    "sqlite-spatialite, csv-csv.")
+@click.option("--out-graph-type", type=click.Choice(['gpickle', 'graphml', 'gml', 'gexf'], case_sensitive=False),
+              required=False, default='gpickle',
+              help="如果原始网络数据是空间数据(shp, geojson, gdb等), 则需要设置存储的图文件格式, "
+                   "默认值gpicke. 支持gpickle, graphml, gml, gexf.")
 # 0-ESRI Shapefile, 1-geojson, 2-fileGDB, 3-spatialite, 4-csv
 @click.option("--out-path", "-o", type=str, required=False, default="res",
               help="输出目录名, 可选, 默认值为当前目录下的'res'.")
@@ -85,7 +90,7 @@ lock = Lock()
               help="多进程数量, 可选, 默认为1, 即单进程. 小于0或者大于CPU最大核心数则进程数为最大核心数,否则为输入实际核心数.")
 def allocate(network, network_layer, direction_field, forward_value, backward_value, both_value,
              default_direction, spath, spath_layer, scapacity_field, tpath, tpath_layer, tcapacity_field,
-             tweight_field, cost, distance_tolerance, out_type, out_path, cpu_count):
+             tweight_field, cost, distance_tolerance, out_type, out_graph_type, out_path, cpu_count):
     travelCosts = list()
     for c in cost:
         if c in travelCosts:
@@ -128,6 +133,7 @@ def allocate(network, network_layer, direction_field, forward_value, backward_va
                         distance_tolerance=distance_tolerance,
                         defaultDirection=default_direction,
                         out_type=out_type,
+                        out_graph_type=out_graph_type,
                         out_path=out_path,
                         cpu_core=cpu_count)
 
@@ -152,6 +158,7 @@ def allocate_from_layer(
         distance_tolerance=500,  # 从原始点到网络最近snap点的距离容差，如果超过说明该点无法到达网络，不进行计算
         defaultDirection=Direction.DirectionBoth,
         out_type=0,
+        out_graph_type='gpickle',
         cpu_core=1):
 
     start_time = time()
@@ -167,21 +174,27 @@ def allocate_from_layer(
 
     try:
         log.info("读取网络数据, 路径为{}...".format(network_path))
-        net = create_graph_from_file(network_path,
-                                     network_layer,
-                                     direction_field=direction_field,
-                                     bothValue=bothValue,
-                                     backwardValue=backwardValue,
-                                     forwardValue=forwardValue)
+
+        input_type = get_suffix(network_path)
+
+        if input_type == 'gml' or input_type == 'gexf' or input_type == 'graphml' or input_type == 'gpickle':
+            net = import_graph_to_network(network_path, input_type)
+            if net is not None:
+                log.info(f"从输入文件读取后构建的图共{len(net)}个节点, {len(net.edges)}条边")
+        else:
+            net = create_graph_from_file(network_path,
+                                         network_layer,
+                                         direction_field=direction_field,
+                                         bothValue=bothValue,
+                                         backwardValue=backwardValue,
+                                         forwardValue=forwardValue)
+
+            if net is not None:
+                export_network_to_graph(out_graph_type, net, out_path)
 
         if net is None:
-            log.error("网络数据存在问题, 无法创建图结构")
+            log.error("网络数据存在问题, 无法创建图结构.")
             return
-
-        out_net_path = os.path.abspath(os.path.join(out_path, "network.gpickle"))
-        with open(out_net_path, 'wb') as f:
-            pickle.dump(net, f, pickle.HIGHEST_PROTOCOL)
-        log.debug("网络数据保存至{}".format(out_net_path))
 
         log.info("读取起始设施数据,路径为{}...".format(start_path))
         ds_start = wks.get_ds(start_path)

@@ -1,13 +1,16 @@
+import ast
+import contextlib
 import math
 import os
+import pickle
 import traceback
 from time import strftime
 
-from networkx import Graph
+from networkx import Graph, generate_graphml
 from osgeo import ogr, osr
 from osgeo.ogr import DataSource, GeometryTypeToName, Geometry, Layer
 from osgeo.osr import SpatialReference
-from shapely import Point, LineString, distance, STRtree, get_num_points
+from shapely import Point, LineString, distance, STRtree, get_num_points, wkt
 from shapely.ops import nearest_points, split, snap
 from shapely.wkt import loads
 
@@ -15,7 +18,7 @@ from Core.common import check_line_type
 from Core.simplification import simplify_graph
 from Core.utils_graph import get_largest_component, add_edge_lengths, _is_endpoint_of_edge, \
     split_line_by_point, is_projectPoint_in_segment
-from Core.DataFactory import workspaceFactory
+from Core.DataFactory import workspaceFactory, get_suffix
 from Core.log4p import Log, mTqdm
 import networkx as nx
 import numpy as np
@@ -28,6 +31,307 @@ class Direction(int):
     DirectionForward = 1
     DirectionBackward = 2
     DirectionBoth = 0
+
+
+def import_graph_to_network(input_path, input_type):
+    net = None
+    if input_type == 'gpickle':
+        with open(input_path, 'rb') as f:
+            net = pickle.load(f)
+    else:
+        net = _load_graph(input_path, input_type)
+
+    return net
+
+
+def export_network_to_graph(out_graph_type, net, out_path):
+    try:
+        out_graph_type = out_graph_type.lower()
+        out_net_path = os.path.abspath(os.path.join(out_path, "network.{}".format(out_graph_type)))
+
+        if out_graph_type == 'gpickle':
+            out_net_path = os.path.abspath(os.path.join(out_path, "network.gpickle"))
+            with open(out_net_path, 'wb') as f:
+                pickle.dump(net, f, pickle.HIGHEST_PROTOCOL)
+        else:
+            _save_graph(net, out_net_path, out_graph_type)
+
+        log.info("网络数据保存至{}".format(out_net_path))
+        return True
+    except:
+        log.error("保存网络数据至图文件时发生错误. {}".format(traceback.format_exc()))
+        return False
+
+
+def _load_graph(
+        filepath=None, input_type='graphml', graph_str=None, node_dtypes=None, edge_dtypes=None, graph_dtypes=None
+):
+    """
+    Load an OSMnx-saved GraphML file from disk or GraphML string.
+
+    This function converts node, edge, and graph-level attributes (serialized
+    as strings) to their appropriate data types. These can be customized as
+    needed by passing in dtypes arguments providing types or custom converter
+    functions. For example, if you want to convert some attribute's values to
+    `bool`, consider using the built-in `ox.io._convert_bool_string` function
+    to properly handle "True"/"False" string literals as True/False booleans:
+    `ox.load_graphml(fp, node_dtypes={my_attr: ox.io._convert_bool_string})`.
+
+    If you manually configured the `all_oneway=True` setting, you may need to
+    manually specify here that edge `oneway` attributes should be type `str`.
+
+    Note that you must pass one and only one of `filepath` or `graphml_str`.
+    If passing `graphml_str`, you may need to decode the bytes read from your
+    file before converting to string to pass to this function.
+
+    Parameters
+    ----------
+    filepath : string or pathlib.Path
+        path to the GraphML file
+    graphml_str : string
+        a valid and decoded string representation of a GraphML file's contents
+    node_dtypes : dict
+        dict of node attribute names:types to convert values' data types. the
+        type can be a python type or a custom string converter function.
+    edge_dtypes : dict
+        dict of edge attribute names:types to convert values' data types. the
+        type can be a python type or a custom string converter function.
+    graph_dtypes : dict
+        dict of graph-level attribute names:types to convert values' data
+        types. the type can be a python type or a custom string converter
+        function.
+
+    Returns
+    -------
+    G : networkx.MultiDiGraph
+    """
+    # specify default graph/node/edge attribute values' data types
+    default_graph_dtypes = {"simplified": _convert_bool_string}
+    default_node_dtypes = {
+        "elevation": float,
+        "elevation_res": float,
+        "lat": float,
+        "lon": float,
+        "osmid": int,
+        "street_count": int,
+        "x": float,
+        "y": float,
+    }
+    default_edge_dtypes = {
+        "bearing": float,
+        "grade": float,
+        "grade_abs": float,
+        "length": float,
+        "oneway": _convert_bool_string,
+        "osmid": int,
+        "reversed": _convert_bool_string,
+        "speed_kph": float,
+        "travel_time": float,
+    }
+
+    # override default graph/node/edge attr types with user-passed types, if any
+    if graph_dtypes is not None:
+        default_graph_dtypes.update(graph_dtypes)
+    if node_dtypes is not None:
+        default_node_dtypes.update(node_dtypes)
+    if edge_dtypes is not None:
+        default_edge_dtypes.update(edge_dtypes)
+
+    if filepath is not None:
+        # read the graph file from disk
+        source = filepath
+        if input_type == 'graphml':
+            G = nx.read_graphml( filepath, node_type=default_node_dtypes["osmid"], force_multigraph=True)
+        elif input_type == 'gml':
+            G = nx.read_gml(filepath, destringizer=int)
+        elif input_type == 'gexf':
+            G = nx.read_gexf(filepath, node_type=default_node_dtypes["osmid"])
+
+    # convert graph/node/edge attribute data types
+    G = _convert_graph_attr_types(G, default_graph_dtypes)
+    G = _convert_node_attr_types(G, default_node_dtypes)
+    G = _convert_edge_attr_types(G, default_edge_dtypes)
+
+    return G
+
+
+def _convert_graph_attr_types(G, dtypes=None):
+    """
+    Convert graph-level attributes using a dict of data types.
+
+    Parameters
+    ----------
+    G : networkx.MultiDiGraph
+        input graph
+    dtypes : dict
+        dict of graph-level attribute names:types
+
+    Returns
+    -------
+    G : networkx.MultiDiGraph
+    """
+    # remove node_default and edge_default metadata keys if they exist
+    G.graph.pop("node_default", None)
+    G.graph.pop("edge_default", None)
+
+    for attr in G.graph.keys() & dtypes.keys():
+        G.graph[attr] = dtypes[attr](G.graph[attr])
+
+    return G
+
+
+def _convert_node_attr_types(G, dtypes=None):
+    """
+    Convert graph nodes' attributes using a dict of data types.
+
+    Parameters
+    ----------
+    G : networkx.MultiDiGraph
+        input graph
+    dtypes : dict
+        dict of node attribute names:types
+
+    Returns
+    -------
+    G : networkx.MultiDiGraph
+    """
+    for _, data in G.nodes(data=True):
+        for attr in data.keys() & dtypes.keys():
+            data[attr] = dtypes[attr](data[attr])
+    return G
+
+
+def _convert_edge_attr_types(G, dtypes=None):
+    """
+    Convert graph edges' attributes using a dict of data types.
+
+    Parameters
+    ----------
+    G : networkx.MultiDiGraph
+        input graph
+    dtypes : dict
+        dict of edge attribute names:types
+
+    Returns
+    -------
+    G : networkx.MultiDiGraph
+    """
+    # for each edge in the graph, eval attribute value lists and convert types
+    for _, _, data in G.edges(data=True, keys=False):
+        # remove extraneous "id" attribute added by graphml saving
+        data.pop("id", None)
+
+        # first, eval stringified lists to convert them to list objects
+        # edge attributes might have a single value, or a list if simplified
+        for attr, value in data.items():
+            if isinstance(value, (int, float)):
+                data[attr] = value
+            else:
+                if value.startswith("[") and value.endswith("]"):
+                    with contextlib.suppress(SyntaxError, ValueError):
+                        data[attr] = ast.literal_eval(value)
+
+        # next, convert attribute value types if attribute appears in dtypes
+        for attr in data.keys() & dtypes.keys():
+            if isinstance(data[attr], list):
+                # if it's a list, eval it then convert each item
+                data[attr] = [dtypes[attr](item) for item in data[attr]]
+            else:
+                # otherwise, just convert the single value
+                data[attr] = dtypes[attr](data[attr])
+
+        # if "geometry" attr exists, convert its well-known text to LineString
+        if "geometry" in data:
+            data["geometry"] = wkt.loads(data["geometry"])
+
+    return G
+
+
+def _convert_bool_string(value):
+    """
+    Convert a "True" or "False" string literal to corresponding boolean type.
+
+    This is necessary because Python will otherwise parse the string "False"
+    to the boolean value True, that is, `bool("False") == True`. This function
+    raises a ValueError if a value other than "True" or "False" is passed.
+
+    If the value is already a boolean, this function just returns it, to
+    accommodate usage when the value was originally inside a stringified list.
+
+    Parameters
+    ----------
+    value : string {"True", "False"}
+        the value to convert
+
+    Returns
+    -------
+    bool
+    """
+    if value in {"True", "False"}:
+        return value == "True"
+
+    if isinstance(value, bool):
+        return value
+
+    # otherwise the value is not a valid boolean
+    msg = f"布尔值错误: {value!r}"
+    raise ValueError(msg)
+
+
+def _save_graph(G, filepath=None, out_type='graphml', gephi=False, encoding="utf-8"):
+    """
+    Save graph to disk as GraphML file.
+
+    Parameters
+    ----------
+    G : networkx.MultiDiGraph
+        input graph
+    filepath : string or pathlib.Path
+        path to the GraphML file including extension. if None, use default
+        data folder + graph.graphml
+    gephi : bool
+        if True, give each edge a unique key/id to work around Gephi's
+        interpretation of the GraphML specification
+    encoding : string
+        the character encoding for the saved file
+
+    Returns
+    -------
+    None
+    """
+    if gephi:
+        # for gephi compatibility, each edge's key must be unique as an id
+        # uvkd = ((u, v, k, d) for k, (u, v, d) in enumerate(G.edges(keys=False, data=True)))
+        # G = nx.MultiDiGraph(uvkd)
+        net = nx.MultiDiGraph()
+        net.add_nodes_from(G.nodes().items())
+        for k, (u, v, d) in enumerate(G.edges(keys=False, data=True)):
+            net.add_edge(u, v, key=k, attr=d)
+        G = net.copy()
+    else:
+        # make a copy to not mutate original graph object caller passed in
+        G = G.copy()
+
+    # stringify all the graph attribute values
+    for attr, value in G.graph.items():
+        G.graph[attr] = str(value)
+
+    # stringify all the node attribute values
+    for _, data in G.nodes(data=True):
+        for attr, value in data.items():
+            data[attr] = str(value)
+
+    # stringify all the edge attribute values
+    for _, _, data in G.edges(keys=False, data=True):
+        for attr, value in data.items():
+            data[attr] = str(value)
+
+    if out_type == 'graphml':
+        nx.write_graphml(G, path=filepath, encoding=encoding)
+    elif out_type == "gml":
+        nx.write_gml(G, path=filepath)
+    elif out_type == "gexf":
+        nx.write_gexf(G, path=filepath, encoding=encoding)
 
 
 def create_graph_from_file(path,

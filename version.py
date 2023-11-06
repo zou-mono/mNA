@@ -2,6 +2,9 @@
 #
 # For more details about fixed file info 'ffi' see:
 # http://msdn.microsoft.com/en-us/library/ms646997.aspx
+from PyInstaller.utils.win32.versioninfo import VSVersionInfo, FixedFileInfo, StringFileInfo, StringTable, StringStruct, \
+  VarFileInfo, VarStruct
+
 VSVersionInfo(
   ffi=FixedFileInfo(
     # filevers and prodvers should be always a tuple with four items: (1, 2, 3, 4)
@@ -31,12 +34,12 @@ VSVersionInfo(
         u'000004b0',
         [StringStruct(u'CompanyName', u''),
         StringStruct(u'FileDescription', u'网络分析工具mNA'),
-        StringStruct(u'FileVersion', u'1.0.0'),
+        StringStruct(u'FileVersion', u'1.1.0'),
         StringStruct(u'InternalName', u''),
         StringStruct(u'LegalCopyright', u'MIT'),
         StringStruct(u'OriginalFilename', u'mNA.exe'),
         StringStruct(u'ProductName', u'mNA'),
-        StringStruct(u'ProductVersion', u'1.0.0')])
+        StringStruct(u'ProductVersion', u'1.1.0')])
       ]), 
     VarFileInfo([VarStruct(u'Translation', [0, 1200])])
   ]

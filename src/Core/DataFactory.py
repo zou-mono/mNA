@@ -255,6 +255,14 @@ def get_suffix(path):
         return DataType.fileGDB
     elif suffix.lower() == ".sqlite":
         return DataType.sqlite
+    elif suffix.lower() == ".gml":
+        return 'gml'
+    elif suffix.lower() == ".gexf":
+        return 'gexf'
+    elif suffix.lower() == '.gpickle':
+        return 'gpickle'
+    elif suffix.lower() == '.graphml':
+        return 'graphml'
     else:
         return None
 
