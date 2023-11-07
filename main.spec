@@ -47,7 +47,7 @@ exe = EXE(pyz,
           upx_exclude=[],
           runtime_tmpdir=None,
           console=True,
-          version="version.py")
+          version="version_main.py")
 coll = COLLECT(exe,
                a.binaries,
                a.zipfiles,

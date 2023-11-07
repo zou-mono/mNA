@@ -6,7 +6,7 @@ import pickle
 import traceback
 from time import strftime
 
-from networkx import Graph, generate_graphml
+from networkx import Graph
 from osgeo import ogr, osr
 from osgeo.ogr import DataSource, GeometryTypeToName, Geometry, Layer
 from osgeo.osr import SpatialReference

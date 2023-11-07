@@ -91,6 +91,7 @@ lock = Lock()
 def allocate(network, network_layer, direction_field, forward_value, backward_value, both_value,
              default_direction, spath, spath_layer, scapacity_field, tpath, tpath_layer, tcapacity_field,
              tweight_field, cost, distance_tolerance, out_type, out_graph_type, out_path, cpu_count):
+    """设施容量分配算法"""
     travelCosts = list()
     for c in cost:
         if c in travelCosts:

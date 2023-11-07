@@ -2,8 +2,8 @@
 #
 # For more details about fixed file info 'ffi' see:
 # http://msdn.microsoft.com/en-us/library/ms646997.aspx
-from PyInstaller.utils.win32.versioninfo import VSVersionInfo, FixedFileInfo, StringFileInfo, StringTable, StringStruct, \
-  VarFileInfo, VarStruct
+# from PyInstaller.utils.win32.versioninfo import VSVersionInfo, FixedFileInfo, StringFileInfo, StringTable, StringStruct, \
+#   VarFileInfo, VarStruct
 
 VSVersionInfo(
   ffi=FixedFileInfo(
