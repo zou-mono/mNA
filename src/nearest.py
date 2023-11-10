@@ -563,47 +563,47 @@ def nearest_facilities_from_point_worker(connection, shared_custom, lst, travelC
     for t in lst:
         start_node = t[0]
         fid = t[1]
-        try:
-            distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
-                                                          cutoff=travelCost)
+        # try:
+        distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
+                                                      cutoff=travelCost)
 
-            match_routes = {}
-            match_distances = {}
+        match_routes = {}
+        match_distances = {}
 
-            if len(routes) > 1:  # 只有一个是本身，不算入搜索结果
-                match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
+        if len(routes) > 1:  # 只有一个是本身，不算入搜索结果
+            match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
 
-                for row in match_df.itertuples():
-                    match_node = row.nodeID
+            for row in match_df.itertuples():
+                match_node = row.nodeID
+                target_fid = row.fid
+
+                if bRoutes:
+                    route = routes[match_node]
                     target_fid = row.fid
+                    match_routes[target_fid] = route
 
-                    if bRoutes:
-                        route = routes[match_node]
-                        target_fid = row.fid
-                        match_routes[target_fid] = route
+                if bDistances:
+                    dis = distances[match_node]
+                    match_distances[target_fid] = dis
 
-                    if bDistances:
-                        dis = distances[match_node]
-                        match_distances[target_fid] = dis
+        if bRoutes and bDistances:
+            nearest_facilities[fid] = {
+                'routes': match_routes,
+                'distance': match_distances
+            }
 
-            if bRoutes and bDistances:
-                nearest_facilities[fid] = {
-                    'routes': match_routes,
-                    'distance': match_distances
-                }
+        if bRoutes and not bDistances:
+            nearest_facilities[fid] = match_routes
 
-            if bRoutes and not bDistances:
-                nearest_facilities[fid] = match_routes
+        if bDistances and not bRoutes:
+            nearest_facilities[fid] = match_distances
 
-            if bDistances and not bRoutes:
-                nearest_facilities[fid] = match_distances
-
-            # bar.update()
-            with lock:
-                bar.update()
-        except:
-            log.error("发生错误节点:{}".format(str(start_node)))
-            continue
+        # bar.update()
+        with lock:
+            bar.update()
+        # except:
+        #     log.error("发生错误节点:{}".format(str(start_node)))
+        #     continue
 
     with lock:
         bar.close()

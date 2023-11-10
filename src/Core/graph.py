@@ -440,6 +440,7 @@ def _add_paths(G, paths):
                  Point((G.nodes[edge[1]]["x"], G.nodes[edge[1]]["y"]))]
             )
 
+            # G.add_edge(edge[0], edge[1], **path)
             bdup = False
             if edge[0] in G:
                 if edge[1] in G[edge[0]]:
@@ -470,6 +471,7 @@ def _add_paths(G, paths):
 
                 if not bdup:
                     G.add_edge(edge[1], edge[0], **path)
+                # G.add_edge(edge[1], edge[0], **path)
 
         # G.add_edges_from(edges, **path)
 
