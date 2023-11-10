@@ -392,65 +392,59 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
                     panMap[iField] = iDstField
 
             icount = 0
-            total_features = in_layer.GetFeatureCount()
+            # total_features = in_layer.GetFeatureCount()
 
             start_points_dict = start_points_df.to_dict()['geom']
             target_points_dict = target_points_df.to_dict()['geom']
 
             # out_line_ds.StartTransaction(force=True)
             # for in_fea in mTqdm(in_layer, total=total_features):
-            with mTqdm(in_layer, total=total_features) as bar:
-                in_fea = in_layer.GetNextFeature()
-                while in_fea:
-                    start_fid = in_fea.GetFID()
-                    # start_loc = start_points_df.loc[start_points_df['fid']==start_fid]
+            # with mTqdm(in_layer, total=total_features) as bar:
+            for start_fid, value in mTqdm(res.items(), total=len(res)):
+                # start_loc = start_points_df.loc[start_points_df['fid']==start_fid]
+                in_fea = in_layer.GetFeature(start_fid)
 
-                    # if start_fid in start_points_df.index:
-                    if start_fid in res:
-                        # start_pt = start_points_df.loc[start_fid]['geom']
-                        start_pt = start_points_dict[start_fid]
-                        target_distances = res[start_fid]['distance']
-                        target_routes = res[start_fid]['routes']
+                start_pt = start_points_dict[start_fid]
+                target_distances = value['distance']
+                target_routes = value['routes']
 
-                        for target_fid, dis in target_distances.items():
-                            if dis <= cost:
-                                target_pt = target_points_dict[target_fid]
-                                route = target_routes[target_fid]
-                                # target_pt = target_points_df.loc[target_fid]['geom']
-                                line = ogr.Geometry(ogr.wkbLineString)
-                                line.AddPoint(start_pt.x, start_pt.y)
-                                line.AddPoint(target_pt.x, target_pt.y)
+                for target_fid, dis in target_distances.items():
+                    if dis <= cost:
+                        target_pt = target_points_dict[target_fid]
+                        route = target_routes[target_fid]
+                        # target_pt = target_points_df.loc[target_fid]['geom']
+                        line = ogr.Geometry(ogr.wkbLineString)
+                        line.AddPoint(start_pt.x, start_pt.y)
+                        line.AddPoint(target_pt.x, target_pt.y)
 
-                                out_value = {
-                                    's_ID': str(start_fid),
-                                    't_ID': str(target_fid),
-                                    'cost': dis
-                                }
-                                # out_value['s_ID'] = str(start_fid)
-                                # out_value['t_ID'] = str(target_fid)
-                                # out_value['cost'] = dis
+                        out_value = {
+                            's_ID': str(start_fid),
+                            't_ID': str(target_fid),
+                            'cost': dis
+                        }
+                        # out_value['s_ID'] = str(start_fid)
+                        # out_value['t_ID'] = str(target_fid)
+                        # out_value['cost'] = dis
 
-                                addFeature(in_fea, start_fid, line, out_line_layer, panMap, icount, out_value)
+                        addFeature(in_fea, start_fid, line, out_line_layer, panMap, icount, out_value)
 
-                                lines = ogr.Geometry(ogr.wkbMultiLineString)
-                                # path_graph = nx.path_graph(route)
-                                for s, t in zip(route[:-1], route[1:]):
-                                # for ea in path_graph.edges():
-                                    eids = G[s][t]
-                                    minlength = sys.float_info.max
-                                    for key, v in eids.items():
-                                        if v['length'] < minlength:
-                                            sel_key = key
-                                    eid = G[s][t][sel_key]
-                                    line = CreateGeometryFromWkt(eid['geometry'].wkt)
+                        lines = ogr.Geometry(ogr.wkbMultiLineString)
+                        # path_graph = nx.path_graph(route)
+                        for s, t in zip(route[:-1], route[1:]):
+                        # for ea in path_graph.edges():
+                            eids = G[s][t]
+                            minlength = sys.float_info.max
+                            for key, v in eids.items():
+                                if v['length'] < minlength:
+                                    sel_key = key
+                            eid = G[s][t][sel_key]
+                            line = CreateGeometryFromWkt(eid['geometry'].wkt)
 
-                                    lines.AddGeometryDirectly(line)
+                            lines.AddGeometryDirectly(line)
 
-                                addFeature(in_fea, start_fid, lines, out_route_layer, panMap, icount, out_value)
+                        addFeature(in_fea, start_fid, lines, out_route_layer, panMap, icount, out_value)
 
                     icount += 1
-                    in_fea = in_layer.GetNextFeature()
-                    bar.update()
 
             out_line_ds.CommitTransaction()
             out_line_ds.FlushCache()
