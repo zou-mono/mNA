@@ -14,7 +14,7 @@ from shapely import Point, LineString, distance, STRtree, get_num_points, wkt
 from shapely.ops import nearest_points, split, snap
 from shapely.wkt import loads
 
-from Core.common import check_line_type
+from Core.check import check_line_type
 from Core.simplification import simplify_graph
 from Core.utils_graph import get_largest_component, add_edge_lengths, _is_endpoint_of_edge, \
     split_line_by_point, is_projectPoint_in_segment
@@ -440,7 +440,16 @@ def _add_paths(G, paths):
                  Point((G.nodes[edge[1]]["x"], G.nodes[edge[1]]["y"]))]
             )
 
-            G.add_edge(edge[0], edge[1], **path)
+            bdup = False
+            if edge[0] in G:
+                if edge[1] in G[edge[0]]:
+                    dup_edges = G[edge[0]][edge[1]]
+                    for key, v in dup_edges.items():
+                        if v['geometry'].equals(path["geometry"]):
+                            bdup = True
+                            break
+            if not bdup:
+                G.add_edge(edge[0], edge[1], **path)
 
             if not is_one_way:
                 path["reversed"] = True
@@ -450,7 +459,17 @@ def _add_paths(G, paths):
                      Point((G.nodes[edge[0]]["x"], G.nodes[edge[0]]["y"]))]
                 )
 
-                G.add_edge(edge[1], edge[0], **path)
+                bdup = False
+                if edge[1] in G:
+                    if edge[0] in G[edge[1]]:
+                        dup_edges = G[edge[1]][edge[0]]
+                        for key, v in dup_edges.items():
+                            if v['geometry'].equals(path["geometry"]):
+                                bdup = True
+                                break
+
+                if not bdup:
+                    G.add_edge(edge[1], edge[0], **path)
 
         # G.add_edges_from(edges, **path)
 
@@ -607,6 +626,8 @@ def makeGraph(G: Graph, additionalPoints, o_max=-1, distance_tolerance=500, rtre
 
         # if eid[0] == 3023 and eid[1] == 9437:
         #     print("debug")
+        if eid == (269515, 269514, 1):
+            print("debug")
 
         breverse = True
         if eid in points_along_edge:
@@ -653,6 +674,8 @@ def makeGraph(G: Graph, additionalPoints, o_max=-1, distance_tolerance=500, rtre
                     'reverse_eid': None,   # 对向边的eid
                     'nodes': [(o_max, ne)]
                 }
+                if o_max == 786237:
+                    print("debug")
                 node_ids[pos[0][i]] = o_max
 
             # target_node_ids.append(o_max)
@@ -721,8 +744,6 @@ def _split_edges(G, points_along_edge):
             continue
 
         has_reverse = False if data['reverse_eid'] is None else True
-
-        # print(eid)
 
         if eid not in G.edges:
             log.error("eid: {}, eid[0]: ({}, {}), eid[1]: ({}, {})".format(eid, G.nodes[eid[0]]['x'], G.nodes[eid[0]]['y'],
@@ -1028,6 +1049,15 @@ def makeGraph2(G: Graph, additionalPoints, o_max=-1, rtree=None, distance_tolera
         #     node_ids[pos[0][i]] = int(node_id)
 
     return G, list(node_ids)
+
+
+class GraphTransfer:
+    def __init__(self, G, df):
+        self.G = G
+        self.df = df
+
+    def task(self):
+        return self.G, self.df
 
 
 if __name__ == '__main__':

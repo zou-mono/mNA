@@ -23,6 +23,15 @@ class DataType(Enum):
     cad_dwg = 10
 
 
+DataType_suffix = {
+    DataType.shapefile: 'shp',
+    DataType.geojson: 'geojson',
+    DataType.fileGDB: 'gdb',
+    DataType.FGDBAPI: 'gdb',
+    DataType.csv: 'csv',
+    DataType.sqlite: 'sqlite'
+}
+
 DataType_dict = {
     DataType.shapefile: "ESRI Shapefile",
     DataType.geojson: "geojson",

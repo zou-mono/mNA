@@ -18,32 +18,6 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-def check_line_type(layer: Layer):
-    layer_type = layer.GetGeomType()
-
-    if layer_type == 2 or layer_type == 5:
-        return True
-    else:
-        return False
-
-
-def check_geom_type(layer: Layer):
-    layer_type = layer.GetGeomType()
-
-    if layer_type == 3 or layer_type == 6 or layer_type == 1 or layer_type == 4:
-        return True
-    else:
-        return False
-
-
-def check_field_type(field: FieldDefn):
-    field_type = field.GetType()
-    if field_type == ogr.OFTReal or field_type == ogr.OFTInteger or field_type == ogr.OFTInteger64:
-        return True
-    else:
-        return False
-
-
 def launderName(name):
     dir = os.path.dirname(name)
     basename, suffix = os.path.splitext(name)
@@ -92,7 +66,9 @@ def get_centerPoints(layer):
         i += 1
 
     # res = zip(Points, points_lst)
-    return pd.DataFrame({'fid': points_lst, 'geom': Points})
+    res = pd.DataFrame({'fid': points_lst, 'geom': Points})
+    res.set_index('fid')
+    return res
 
 
 def singleton(cls):

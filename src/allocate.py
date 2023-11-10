@@ -15,13 +15,15 @@ from multiprocessing import cpu_count
 
 from Core import filegdbapi
 from Core.DataFactory import workspaceFactory, get_suffix
-from Core.common import check_geom_type, check_field_type, get_centerPoints
+from Core.check import init_check
+from Core.common import get_centerPoints
 from Core.core import DataType, QueueManager, check_layer_name
 from Core.fgdb import FieldType
 from Core.filegdbapi import FieldDef
-from Core.graph import create_graph_from_file, Direction, makeGraph, export_network_to_graph, import_graph_to_network
+from Core.graph import create_graph_from_file, Direction, makeGraph, export_network_to_graph, import_graph_to_network, \
+    GraphTransfer
 from Core.log4p import Log, mTqdm
-from nearest_facilities import nearest_facilities_from_point, \
+from nearest import nearest_facilities_from_point, \
     nearest_facilities_from_point_worker
 from person import Person
 
@@ -392,7 +394,6 @@ def allocate_from_layer(
     except:
         log.error(traceback.format_exc())
         log.error("计算未完成, 请查看日志: {}.".format(os.path.abspath(log.logName)))
-        return
     finally:
         del ds_start
         del ds_target
@@ -522,11 +523,11 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
             out_layer.LoadOnlyMode(True)
             out_layer.SetWriteLock()
 
-        total_feature = out_layer.GetFeatureCount()
+        total_features = out_layer.GetFeatureCount()
 
         out_ds.StartTransaction(force=True)
         # for feature in mTqdm(out_layer, total=total_feature):
-        with mTqdm(out_layer, total=total_feature) as bar:
+        with mTqdm(out_layer, total=total_features) as bar:
             feature = out_layer.GetNextFeature()
             while feature:
                 fid = feature.GetFID()
@@ -705,44 +706,6 @@ def allocate_capacity_worker(shared_custom, nearest_facilities, start_capacity_d
     return start_capacity_dict, target_capacity_dict
 
 
-def init_check(layer, capacity_field, suffix="", target_weight_idx=-1):
-    layer_name = layer.GetName()
-
-    if not check_geom_type(layer):
-        log.error("设施数据{}不满足几何类型要求,只允许Polygon,multiPolygon,Point,multiPoint类型".format(suffix, layer_name))
-        return None
-
-    capacity_idx = layer.FindFieldIndex(capacity_field, False)
-    if capacity_idx == -1:
-        log.error("{}设施数据'{}'缺少容量字段{},无法进行后续计算".format(suffix, layer_name, capacity_field))
-        return False
-
-    if not check_field_type(layer.GetLayerDefn().GetFieldDefn(capacity_idx)):
-        log.error("设施数据'{}'的字段{}不满足类型要求,只允许int, double类型".format(suffix, layer_name, capacity_field))
-        return False
-
-    query_str = '''"{}" > 0'''.format(capacity_field)
-    layer.SetAttributeFilter(query_str)
-
-    capacity = 0
-    capacity_dict = {}
-    weight_dict = {}
-    layer.ResetReading()
-    for feature in layer:
-        fid = feature.GetFID()
-        v = feature.GetField(capacity_field)
-        capacity_dict[fid] = v
-        capacity = capacity + v
-
-        if target_weight_idx > 0:
-            weight = feature.GetField(target_weight_idx)
-            weight_dict[fid] = weight
-
-    log.info("{}设施总容量为{}".format(suffix, capacity))
-
-    return True, capacity, capacity_dict, capacity_idx, weight_dict
-
-
 class CapacityTransfer:
     def __init__(self, persons):
         self.persons = persons
@@ -755,15 +718,6 @@ class CapacityTransfer:
     def task(self):
         return self.persons
         # return self.persons, self.nearest_facilities, self.start_dict, self.target_dict, self.target_weight_dict
-
-
-class GraphTransfer:
-    def __init__(self, G, df):
-        self.G = G
-        self.df = df
-
-    def task(self):
-        return self.G, self.df
 
 
 if __name__ == '__main__':

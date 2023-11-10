@@ -42,6 +42,41 @@ class workspaceFactory(object):
 
         return wks
 
+    def createDataSource(self, path, options=None):
+        if options is None:
+            options = []
+        if self.driver is None:
+            log.error("缺失图形文件引擎{}!".format(self.driverName))
+            return None
+        else:
+            self.datasource = self.driver.CreateDataSource(path, options)
+        return self.datasource
+
+    def createFromExistingDataSource(self, in_layer, out_path, layer_name, srs,
+                                     datasetCreationOptions, layerCreationOptions, new_fields=None, open=True):
+        out_DS = self.createDataSource(out_path, options=datasetCreationOptions)
+        out_layer = out_DS.CreateLayer(layer_name, srs=srs, geom_type=ogr.wkbMultiLineString, options=layerCreationOptions)
+
+        in_defn = in_layer.GetLayerDefn()
+        for i in range(in_defn.GetFieldCount()):
+            fieldName = in_defn.GetFieldDefn(i).GetName()
+            fieldTypeCode = in_defn.GetFieldDefn(i).GetType()
+            new_field = ogr.FieldDefn(fieldName, fieldTypeCode)
+            out_layer.CreateField(new_field)
+            del new_field
+
+        if new_fields is not None:
+            for new_field in new_fields:
+                out_layer.CreateField(new_field)
+                del new_field
+
+        del out_layer
+        if open:
+            return out_DS
+        else:
+            del out_DS
+            return None
+
     def openFromFile(self, file, access=0):
         if self.driver is None:
             log.error("缺失图形文件引擎{}!".format(self.driverName))
@@ -189,6 +224,40 @@ class workspaceFactory(object):
             out_layer = None
 
 
+def addFeature(in_feature, fid, geometry, out_layer, panMap, icount, new_values=None):
+    try:
+        out_Feature = ogr.Feature(out_layer.GetLayerDefn())
+        # defn = in_layer.GetLayerDefn()
+        # out_Feature = ogr.Feature(in_layer.GetLayerDefn())
+        # poDstFeature.SetGeometry(geometry)
+
+        # for i in range(defn.GetFieldCount()):
+        #     fieldName = defn.GetFieldDefn(i).GetName()
+        #     # print(in_feature.GetField(i))
+        #     ofeature.SetField(fieldName, in_feature.GetField(i))
+        out_Feature.SetFID(fid)
+        out_Feature.SetFromWithMap(in_feature, 1, panMap)
+        # poDstGeometry = poDstFeature.GetGeometryRef()
+        out_Feature.SetGeometryDirectly(geometry)
+
+        if new_values is not None:
+            for k, v in new_values.items():
+                out_Feature.SetField(k, v)
+
+        out_layer.CreateFeature(out_Feature)
+        del out_Feature
+        return 1
+    except UnicodeEncodeError:
+        log.error("错误发生在第{}个要素.\n{}".format(icount, "字符编码无法转换，请检查输入文件的字段!"))
+        return -1
+    except RuntimeError:
+        log.error("错误发生在第{}个要素.\n{}".format(icount, "无法拷贝属性值"))
+        return -2
+    except:
+        log.error("错误发生在第{}个要素.\n{}".format(icount, traceback.format_exc()))
+        return -10000
+
+
 class fgdbapiWorkspaceFactory(workspaceFactory):
     def __init__(self):
         super().__init__()
@@ -265,5 +334,3 @@ def get_suffix(path):
         return 'graphml'
     else:
         return None
-
-
