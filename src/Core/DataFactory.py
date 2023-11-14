@@ -54,6 +54,7 @@ class workspaceFactory(object):
 
     def createFromExistingDataSource(self, in_layer, out_path, layer_name, srs,
                                      datasetCreationOptions, layerCreationOptions, new_fields=None, open=True):
+
         out_DS = self.createDataSource(out_path, options=datasetCreationOptions)
         out_layer = out_DS.CreateLayer(layer_name, srs=srs, geom_type=ogr.wkbMultiLineString, options=layerCreationOptions)
 
@@ -226,6 +227,7 @@ class workspaceFactory(object):
 
 def addFeature(in_feature, fid, geometry, out_layer, panMap, icount, new_values=None):
     try:
+
         out_Feature = ogr.Feature(out_layer.GetLayerDefn())
         # defn = in_layer.GetLayerDefn()
         # out_Feature = ogr.Feature(in_layer.GetLayerDefn())
@@ -244,7 +246,7 @@ def addFeature(in_feature, fid, geometry, out_layer, panMap, icount, new_values=
             for k, v in new_values.items():
                 out_Feature.SetField(k, v)
 
-        out_layer.CreateFeature(out_Feature)
+        a = out_layer.CreateFeature(out_Feature)
         del out_Feature
         return 1
     except UnicodeEncodeError:

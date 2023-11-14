@@ -353,101 +353,113 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
             gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
 
         out_suffix = DataType_suffix[out_type_f]
+
+        new_fields = []
+        new_fields.append(ogr.FieldDefn('s_ID', ogr.OFTString))
+        new_fields.append(ogr.FieldDefn('t_ID', ogr.OFTString))
+        new_fields.append(ogr.FieldDefn('cost', ogr.OFTReal))
+
+        poSrcFDefn = in_layer.GetLayerDefn()
+        nSrcFieldCount = poSrcFDefn.GetFieldCount()
+        panMap = [-1] * nSrcFieldCount
+
+        for iField in range(poSrcFDefn.GetFieldCount()):
+            poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
+            iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
+            if iDstField >= 0:
+                panMap[iField] = iDstField
+
+        cost = max(costs)  # 只导出最大距离，其他的可以从最大距离中筛选，不重复导出
+
+        # for cost in costs:
+
+        line_layer_name = "lines_{}_{}".format(layer_name, str(cost))
+        route_layer_name = "routes_{}_{}".format(layer_name, str(cost))
+        line_layer_name = check_layer_name(line_layer_name)
+        route_layer_name = check_layer_name(route_layer_name)
+
+        line_out_path = os.path.join(out_path, "{}.{}".format(line_layer_name, out_suffix))
+        route_out_path = os.path.join(out_path, "{}.{}".format(route_layer_name, out_suffix))
+
+        wks = workspaceFactory().get_factory(out_type_f)
+        wks.createFromExistingDataSource(in_layer, line_out_path, line_layer_name, srs,
+                                         datasetCreationOptions, layerCreationOptions, new_fields, open=False)
+        wks.createFromExistingDataSource(in_layer, route_out_path, route_layer_name, srs,
+                                         datasetCreationOptions, layerCreationOptions, new_fields, open=False)
+
         if out_type_f == DataType.fileGDB:
             out_type_f = DataType.FGDBAPI
 
         wks = workspaceFactory().get_factory(out_type_f)
-        new_fields = []
-        new_fields.append(ogr.FieldDefn('s_ID', ogr.OFTString))
-        new_fields.append(ogr.FieldDefn('t_ID', ogr.OFTString))
-        new_fields.append(ogr.FieldDefn('cost', ogr.OFTString))
+        out_line_ds = wks.openFromFile(line_out_path, 1)
+        out_line_layer = out_line_ds.GetLayerByName(line_layer_name)
+        out_route_ds = wks.openFromFile(route_out_path, 1)
+        out_route_layer = out_route_ds.GetLayerByName(route_layer_name)
 
-        for cost in costs:
-            in_layer.ResetReading()
+        icount = 0
+        # total_features = in_layer.GetFeatureCount()
 
-            line_layer_name = "lines_{}_{}".format(layer_name, str(cost))
-            route_layer_name = "routes_{}_{}".format(layer_name, str(cost))
+        start_points_dict = start_points_df.to_dict()['geom']
+        target_points_dict = target_points_df.to_dict()['geom']
 
-            line_out_path = os.path.join(out_path, "{}.{}".format(line_layer_name, out_suffix))
-            route_out_path = os.path.join(out_path, "{}.{}".format(route_layer_name, out_suffix))
+        if out_type == DataType.fileGDB.value:
+            out_line_layer.LoadOnlyMode(True)
+            out_line_layer.SetWriteLock()
+            out_route_layer.LoadOnlyMode(True)
+            out_route_layer.SetWriteLock()
 
-            wks.createFromExistingDataSource(in_layer, line_out_path, line_layer_name, srs,
-                                             datasetCreationOptions, layerCreationOptions, new_fields, open=False)
-            wks.createFromExistingDataSource(in_layer, route_out_path, route_layer_name, srs,
-                                             datasetCreationOptions, layerCreationOptions, new_fields, open=False)
+        out_line_ds.StartTransaction(force=True)
+        # for in_fea in mTqdm(in_layer, total=total_features):
+        # with mTqdm(in_layer, total=total_features) as bar:
+        for start_fid, value in mTqdm(res.items(), total=len(res)):
+            # start_loc = start_points_df.loc[start_points_df['fid']==start_fid]
+            in_fea = in_layer.GetFeature(start_fid)
 
-            out_line_ds = wks.openFromFile(line_out_path, 1)
-            out_line_layer = out_line_ds.GetLayerByName(line_layer_name)
-            out_route_ds = wks.openFromFile(route_out_path, 1)
-            out_route_layer = out_route_ds.GetLayerByName(route_layer_name)
+            start_pt = start_points_dict[start_fid]
+            target_distances = value['distance']
+            target_routes = value['routes']
 
-            poSrcFDefn = in_layer.GetLayerDefn()
-            nSrcFieldCount = poSrcFDefn.GetFieldCount()
-            panMap = [-1] * nSrcFieldCount
+            for target_fid, dis in target_distances.items():
+                if dis <= cost:
+                    target_pt = target_points_dict[target_fid]
+                    route = target_routes[target_fid]
+                    # target_pt = target_points_df.loc[target_fid]['geom']
+                    line = ogr.Geometry(ogr.wkbLineString)
+                    line.AddPoint(start_pt.x, start_pt.y)
+                    line.AddPoint(target_pt.x, target_pt.y)
 
-            for iField in range(poSrcFDefn.GetFieldCount()):
-                poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
-                iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
-                if iDstField >= 0:
-                    panMap[iField] = iDstField
+                    out_value = {
+                        's_ID': str(start_fid),
+                        't_ID': str(target_fid),
+                        'cost': dis
+                    }
+                    # out_value['s_ID'] = str(start_fid)
+                    # out_value['t_ID'] = str(target_fid)
+                    # out_value['cost'] = dis
 
-            icount = 0
-            # total_features = in_layer.GetFeatureCount()
+                    addFeature(in_fea, start_fid, line, out_line_layer, panMap, icount, out_value)
 
-            start_points_dict = start_points_df.to_dict()['geom']
-            target_points_dict = target_points_df.to_dict()['geom']
+                    lines = ogr.Geometry(ogr.wkbMultiLineString)
+                    # path_graph = nx.path_graph(route)
+                    for s, t in zip(route[:-1], route[1:]):
+                    # for ea in path_graph.edges():
+                        eids = G[s][t]
+                        minlength = sys.float_info.max
+                        for key, v in eids.items():
+                            if v['length'] < minlength:
+                                sel_key = key
+                        eid = G[s][t][sel_key]
+                        line = CreateGeometryFromWkt(eid['geometry'].wkt)
 
-            # out_line_ds.StartTransaction(force=True)
-            # for in_fea in mTqdm(in_layer, total=total_features):
-            # with mTqdm(in_layer, total=total_features) as bar:
-            for start_fid, value in mTqdm(res.items(), total=len(res)):
-                # start_loc = start_points_df.loc[start_points_df['fid']==start_fid]
-                in_fea = in_layer.GetFeature(start_fid)
+                        lines.AddGeometryDirectly(line)
 
-                start_pt = start_points_dict[start_fid]
-                target_distances = value['distance']
-                target_routes = value['routes']
+                    addFeature(in_fea, start_fid, lines, out_route_layer, panMap, icount, out_value)
 
-                for target_fid, dis in target_distances.items():
-                    if dis <= cost:
-                        target_pt = target_points_dict[target_fid]
-                        route = target_routes[target_fid]
-                        # target_pt = target_points_df.loc[target_fid]['geom']
-                        line = ogr.Geometry(ogr.wkbLineString)
-                        line.AddPoint(start_pt.x, start_pt.y)
-                        line.AddPoint(target_pt.x, target_pt.y)
+                icount += 1
 
-                        out_value = {
-                            's_ID': str(start_fid),
-                            't_ID': str(target_fid),
-                            'cost': dis
-                        }
-                        # out_value['s_ID'] = str(start_fid)
-                        # out_value['t_ID'] = str(target_fid)
-                        # out_value['cost'] = dis
+        out_line_ds.CommitTransaction()
+        out_line_ds.FlushCache()
 
-                        addFeature(in_fea, start_fid, line, out_line_layer, panMap, icount, out_value)
-
-                        lines = ogr.Geometry(ogr.wkbMultiLineString)
-                        # path_graph = nx.path_graph(route)
-                        for s, t in zip(route[:-1], route[1:]):
-                        # for ea in path_graph.edges():
-                            eids = G[s][t]
-                            minlength = sys.float_info.max
-                            for key, v in eids.items():
-                                if v['length'] < minlength:
-                                    sel_key = key
-                            eid = G[s][t][sel_key]
-                            line = CreateGeometryFromWkt(eid['geometry'].wkt)
-
-                            lines.AddGeometryDirectly(line)
-
-                        addFeature(in_fea, start_fid, lines, out_route_layer, panMap, icount, out_value)
-
-                    icount += 1
-
-            out_line_ds.CommitTransaction()
-            out_line_ds.FlushCache()
         return True
     except:
         log.error(traceback.format_exc())

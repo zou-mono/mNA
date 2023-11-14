@@ -130,6 +130,9 @@ class GeoDatabase(filegdbapi.Geodatabase):
             tbl.ResetReading()
             return tbl
 
+    # def CreateLayer(self, name):
+    #     self.CreateTable()
+
     def StartTransaction(self, force=True):
         pass
 
