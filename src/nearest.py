@@ -308,8 +308,10 @@ def nearest_facilities_from_layer(
 
 def export_to_file(G, out_path, start_points_df, target_points_df,
                    res, costs, in_layer=None, layer_name="", out_type=0):
-    out_ds = None
-    out_layer = None
+    out_line_ds = None
+    out_line_layer = None
+    out_route_ds = None
+    out_route_layer = None
     out_type_f = None
 
     try:
@@ -340,6 +342,8 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
         elif out_type == DataType.geojson.value:
             out_type_f = DataType.geojson
             out_format = "GeoJSON"
+            gdal.SetConfigOption('ATTRIBUTES_SKIP', 'NO')
+            gdal.SetConfigOption('OGR_GEOJSON_MAX_OBJ_SIZE', '0')
         elif out_type == DataType.fileGDB.value:
             out_format = "FileGDB"
             out_type_f = DataType.fileGDB
@@ -382,19 +386,21 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
         route_out_path = os.path.join(out_path, "{}.{}".format(route_layer_name, out_suffix))
 
         wks = workspaceFactory().get_factory(out_type_f)
-        wks.createFromExistingDataSource(in_layer, line_out_path, line_layer_name, srs,
-                                         datasetCreationOptions, layerCreationOptions, new_fields, open=False)
-        wks.createFromExistingDataSource(in_layer, route_out_path, route_layer_name, srs,
-                                         datasetCreationOptions, layerCreationOptions, new_fields, open=False)
+        out_line_ds,  out_line_layer = wks.createFromExistingDataSource(in_layer, line_out_path, line_layer_name, srs,
+                                         datasetCreationOptions, layerCreationOptions, new_fields,
+                                         geom_type=ogr.wkbLineString, open=True)
+        out_route_ds, out_route_layer = wks.createFromExistingDataSource(in_layer, route_out_path, route_layer_name, srs,
+                                         datasetCreationOptions, layerCreationOptions, new_fields,
+                                         geom_type=ogr.wkbMultiLineString, open=True)
 
-        if out_type_f == DataType.fileGDB:
-            out_type_f = DataType.FGDBAPI
+        # if out_type_f == DataType.fileGDB:
+        #     out_type_f = DataType.FGDBAPI
 
-        wks = workspaceFactory().get_factory(out_type_f)
-        out_line_ds = wks.openFromFile(line_out_path, 1)
-        out_line_layer = out_line_ds.GetLayerByName(line_layer_name)
-        out_route_ds = wks.openFromFile(route_out_path, 1)
-        out_route_layer = out_route_ds.GetLayerByName(route_layer_name)
+        # wks = workspaceFactory().get_factory(out_type_f)
+        # out_line_ds = wks.openFromFile(line_out_path, 1)
+        # out_line_layer = out_line_ds.GetLayerByName(line_layer_name)
+        # out_route_ds = wks.openFromFile(route_out_path, 1)
+        # out_route_layer = out_route_ds.GetLayerByName(route_layer_name)
 
         icount = 0
         # total_features = in_layer.GetFeatureCount()
@@ -402,11 +408,11 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
         start_points_dict = start_points_df.to_dict()['geom']
         target_points_dict = target_points_df.to_dict()['geom']
 
-        if out_type == DataType.fileGDB.value:
-            out_line_layer.LoadOnlyMode(True)
-            out_line_layer.SetWriteLock()
-            out_route_layer.LoadOnlyMode(True)
-            out_route_layer.SetWriteLock()
+        # if out_type_f == DataType.FGDBAPI:
+        #     out_line_layer.LoadOnlyMode(True)
+        #     out_line_layer.SetWriteLock()
+        #     out_route_layer.LoadOnlyMode(True)
+        #     out_route_layer.SetWriteLock()
 
         out_line_ds.StartTransaction(force=True)
         # for in_fea in mTqdm(in_layer, total=total_features):
@@ -425,17 +431,14 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
                     route = target_routes[target_fid]
                     # target_pt = target_points_df.loc[target_fid]['geom']
                     line = ogr.Geometry(ogr.wkbLineString)
-                    line.AddPoint(start_pt.x, start_pt.y)
-                    line.AddPoint(target_pt.x, target_pt.y)
+                    line.AddPoint_2D(start_pt.x, start_pt.y)
+                    line.AddPoint_2D(target_pt.x, target_pt.y)
 
                     out_value = {
                         's_ID': str(start_fid),
                         't_ID': str(target_fid),
                         'cost': dis
                     }
-                    # out_value['s_ID'] = str(start_fid)
-                    # out_value['t_ID'] = str(target_fid)
-                    # out_value['cost'] = dis
 
                     addFeature(in_fea, start_fid, line, out_line_layer, panMap, icount, out_value)
 
@@ -458,24 +461,25 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
                 icount += 1
 
         out_line_ds.CommitTransaction()
-        out_line_ds.FlushCache()
+        out_line_ds.SyncToDisk()
+        out_route_ds.CommitTransaction()
+        out_route_ds.SyncToDisk()
 
         return True
     except:
         log.error(traceback.format_exc())
         return False
-    # finally:
-    #     if out_type_f == DataType.FGDBAPI:
-    #         if out_layer is not None:
-    #             out_layer.LoadOnlyMode(False)
-    #             out_layer.FreeWriteLock()
-    #         out_ds.CloseTable(out_layer)
-    #         filegdbapi.CloseGeodatabase(out_ds)
-    #     else:
-    #         if out_ds is not None:
-    #             out_ds.Destroy()
-    #     del out_ds
-    #     del out_layer
+    finally:
+        if out_line_ds is not None:
+            out_line_ds.Destroy()
+        out_line_ds = None
+
+        if out_route_ds is not None:
+            out_route_ds.Destroy()
+        out_route_ds = None
+
+        del out_line_layer
+        del out_route_layer
 
 
 def export_csv(out_path, layer_name, res, costs):

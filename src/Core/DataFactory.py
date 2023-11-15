@@ -53,10 +53,11 @@ class workspaceFactory(object):
         return self.datasource
 
     def createFromExistingDataSource(self, in_layer, out_path, layer_name, srs,
-                                     datasetCreationOptions, layerCreationOptions, new_fields=None, open=True):
+                                     datasetCreationOptions, layerCreationOptions, new_fields=None,
+                                     geom_type=ogr.wkbMultiLineString, open=True):
 
         out_DS = self.createDataSource(out_path, options=datasetCreationOptions)
-        out_layer = out_DS.CreateLayer(layer_name, srs=srs, geom_type=ogr.wkbMultiLineString, options=layerCreationOptions)
+        out_layer = out_DS.CreateLayer(layer_name, srs=srs, geom_type=geom_type, options=layerCreationOptions)
 
         in_defn = in_layer.GetLayerDefn()
         for i in range(in_defn.GetFieldCount()):
@@ -71,12 +72,12 @@ class workspaceFactory(object):
                 out_layer.CreateField(new_field)
                 del new_field
 
-        del out_layer
         if open:
-            return out_DS
+            return out_DS, out_layer
         else:
             del out_DS
-            return None
+            del out_layer
+            return None, None
 
     def openFromFile(self, file, access=0):
         if self.driver is None:
@@ -227,26 +228,24 @@ class workspaceFactory(object):
 
 def addFeature(in_feature, fid, geometry, out_layer, panMap, icount, new_values=None):
     try:
-
+        # if isinstance(out_layer, ogr.Layer):
         out_Feature = ogr.Feature(out_layer.GetLayerDefn())
-        # defn = in_layer.GetLayerDefn()
-        # out_Feature = ogr.Feature(in_layer.GetLayerDefn())
-        # poDstFeature.SetGeometry(geometry)
+        # elif isinstance(out_layer, fgdb.Table):
+        #     out_Feature = fgdb.Row()
+        #     out_layer.CreateRowObject(out_Feature)
+        #     out_Feature.SetGeometry2(geometry)
+        #     out_layer.Insert(out_Feature)
 
-        # for i in range(defn.GetFieldCount()):
-        #     fieldName = defn.GetFieldDefn(i).GetName()
-        #     # print(in_feature.GetField(i))
-        #     ofeature.SetField(fieldName, in_feature.GetField(i))
         out_Feature.SetFID(fid)
         out_Feature.SetFromWithMap(in_feature, 1, panMap)
+        out_Feature.SetGeometry(geometry)
         # poDstGeometry = poDstFeature.GetGeometryRef()
-        out_Feature.SetGeometryDirectly(geometry)
 
         if new_values is not None:
             for k, v in new_values.items():
                 out_Feature.SetField(k, v)
 
-        a = out_layer.CreateFeature(out_Feature)
+        out_layer.CreateFeature(out_Feature)
         del out_Feature
         return 1
     except UnicodeEncodeError:

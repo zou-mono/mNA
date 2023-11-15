@@ -454,6 +454,7 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
         elif out_type == DataType.geojson.value:
             out_type_f = DataType.geojson
             out_format = "GeoJSON"
+            layerCreationOptions = ['NATIVE_DATA=TRUE', 'RFC7946=YES']
             if not os.path.exists(out_path):
                 os.mkdir(out_path)
             out_path = os.path.join(out_path, "{}.geojson".format(layer_name))
@@ -494,7 +495,7 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
             used_field_name = "used_{}".format(idx)
             used_idx = out_layer.FindFieldIndex(used_field_name, False)
             if used_idx == -1:
-                if out_type == DataType.fileGDB.value:
+                if out_type_f == DataType.FGDBAPI:
                     new_field = FieldDef()
                     new_field.SetName(used_field_name)
                     new_field.SetType(FieldType.fieldTypeInteger.value)
@@ -508,7 +509,7 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
             remain_field_name = "remain_{}".format(idx)
             remain_idx = out_layer.FindFieldIndex(remain_field_name, False)
             if remain_idx == -1:
-                if out_type == DataType.fileGDB.value:
+                if out_type_f == DataType.FGDBAPI:
                     new_field = FieldDef()
                     new_field.SetName(remain_field_name)
                     new_field.SetType(FieldType.fieldTypeInteger.value)
@@ -519,13 +520,15 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
                 remain_field_idx.append(remain_idx)
                 del new_field
 
-        if out_type == DataType.fileGDB.value:
+        #  用原生API加快filegdb的update速度, ogr库只能在createfeature时加快
+        if out_type_f == DataType.FGDBAPI:
             out_layer.LoadOnlyMode(True)
             out_layer.SetWriteLock()
 
         total_features = out_layer.GetFeatureCount()
 
         out_ds.StartTransaction(force=True)
+        # out_layer.StartTransaction()
         # for feature in mTqdm(out_layer, total=total_feature):
         with mTqdm(out_layer, total=total_features) as bar:
             feature = out_layer.GetNextFeature()
@@ -550,8 +553,9 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
                 feature = out_layer.GetNextFeature()
                 bar.update()
 
+        # out_layer.CommitTransaction()
         out_ds.CommitTransaction()
-        out_ds.FlushCache()
+        out_ds.SyncToDisk()
         return True
     except:
         log.error(traceback.format_exc())

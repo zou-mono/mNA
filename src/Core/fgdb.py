@@ -256,18 +256,36 @@ class Table(filegdbapi.Table):
         if hr < 0:
             log.error("更新字段错误. 代码:{}".format(str(hr)))
 
-    def CreateFeature(self):
-        row = Row()
+    def CreateFeature(self, row):
+        # row = Row()
         hr = self.CreateRowObject(row)
+        # if hr < 0:
+        #     log.error("创建要素失败. 代码:{}".format(str(hr)))
+        #     return None
+        # return row
+        hr = self.Insert(row)
         if hr < 0:
             log.error("创建要素失败. 代码:{}".format(str(hr)))
             return None
-        return row
+
+    def StartTransaction(self, force=True):
+        pass
+
+    def CommitTransaction(self):
+        pass
+
+    def FlushCache(self):
+        pass
 
 
 class Row(filegdbapi.Row):
     def __init__(self):
         super(Row, self).__init__()
+
+        # fieldCount = poDefnIn.GetFieldCount
+        # for i in range(fieldCount):
+    def SetFID(self, fid):
+        pass
 
     def GetFID(self):
         objectID = filegdbapi.intp()
@@ -278,9 +296,9 @@ class Row(filegdbapi.Row):
             return objectID.value()
 
     # 输入ogr的Geometry
-    def SetGeometry(self, ogrGeometry):
-        nOGRType = ogr.GT_Flatten(ogrGeometry.getGeometryType())
-        print(nOGRType)
+    # def SetGeometry(self, ogrGeometry):
+    #     nOGRType = ogr.GT_Flatten(ogrGeometry.getGeometryType())
+    #     print(nOGRType)
 
     def GetFieldIndex(self, get_field_name):
         try:
@@ -438,9 +456,9 @@ class Row(filegdbapi.Row):
 
         return field_count
 
-    def SetGeometry(self, wkt):
+    def SetGeometry2(self, ogr_geometry: ogr.Geometry):
         hr = -10000
-        ogr_geometry = ogr.CreateGeometryFromWkt(wkt)
+        # ogr_geometry = ogr.CreateGeometryFromWkt(wkt)
         geomType = ogr_geometry.GetGeometryType()
 
         pGeom = None
@@ -461,7 +479,7 @@ class Row(filegdbapi.Row):
                 m_value = ogr_geometry.GetM()
                 hr = filegdbapi.SetPoint(pGeom, point, None, m_value)
 
-        if geomType == ogr.wkbMultiPoint or geomType == ogr.wkbMultiPointZM or geomType == ogr.wkbMultiPointM:
+        elif geomType == ogr.wkbMultiPoint or geomType == ogr.wkbMultiPointZM or geomType == ogr.wkbMultiPointM:
             ogr_points = ogr_geometry.GetPoints()
             numPts = len(ogr_points)
             pointArray = filegdbapi.pointArray(numPts)
@@ -485,16 +503,22 @@ class Row(filegdbapi.Row):
             elif geomType == ogr.wkbMultiPointZM:
                 hr = filegdbapi.SetMultiPoint(pGeom, pointArray, numPts, zArray, mArray)
 
-        if geomType == ogr.wkbLineString or geomType == ogr.wkbLineStringZM or geomType == ogr.wkbLineStringM:
+        elif geomType == ogr.wkbLineString or geomType == ogr.wkbLineStringZM or geomType == ogr.wkbLineStringM:
             ogr_points = ogr_geometry.GetPoints()
-            numPts = len(ogr_points)
+            numPts = len(ogr_points) + 1
             pointArray = filegdbapi.pointArray(numPts)
+            parts = filegdbapi.intArray(0)
             mArray = filegdbapi.doubleArray(numPts)
             zArray = filegdbapi.doubleArray(numPts)
             i = 0
+
             for ogr_point in ogr_points:
-                pointArray[i].x = ogr_point[0]
-                pointArray[i].y = ogr_point[1]
+                # pointArray[i].x = ogr_point[0]
+                # pointArray[i].y = ogr_point[1]
+                pt = filegdbapi.Point()
+                pt.x = ogr_point[0]
+                pt.y = ogr_point[1]
+                pointArray[i] = pt
                 if len(ogr_point) >= 3:
                     zArray[i] = ogr_point[2]
                 if len(ogr_point) == 4:
@@ -503,13 +527,13 @@ class Row(filegdbapi.Row):
             pGeom = filegdbapi.MultiPartShapeBuffer()
 
             if geomType == ogr.wkbLineString:
-                hr = filegdbapi.SetPolyline(pGeom, pointArray, numPts, [0], 1)
+                hr = filegdbapi.SetPolyline(pGeom, pointArray, numPts, parts, 1)
             elif geomType == ogr.wkbLineStringM:
-                hr = filegdbapi.SetPolyline(pGeom, pointArray, numPts, [0], 1, None, mArray)
+                hr = filegdbapi.SetPolyline(pGeom, pointArray, numPts, parts, 1, None, mArray)
             elif geomType == ogr.wkbLineStringZM:
-                hr = filegdbapi.SetPolyline(pGeom, pointArray, numPts, [0], 1, zArray, mArray)
+                hr = filegdbapi.SetPolyline(pGeom, pointArray, numPts, parts, 1, zArray, mArray)
 
-        if geomType == ogr.wkbMultiLineString or geomType == ogr.wkbMultiLineStringZM or geomType == ogr.wkbMultiLineStringM or \
+        elif geomType == ogr.wkbMultiLineString or geomType == ogr.wkbMultiLineStringZM or geomType == ogr.wkbMultiLineStringM or \
             geomType == ogr.wkbPolygon or geomType == ogr.wkbPolygonZM or geomType == ogr.wkbPolygonM:
             ogr_points = []
             ogr_parts = [0]
@@ -541,7 +565,7 @@ class Row(filegdbapi.Row):
             elif geomType == ogr.wkbPolygonZM:
                 hr = filegdbapi.SetPolygon(pGeom, pointArray, numPts, partArray, numParts, zArray, mArray)
 
-        if geomType == ogr.wkbMultiPolygon or geomType == ogr.wkbMultiPolygonZM or geomType == ogr.wkbMultiPolygonM:
+        elif geomType == ogr.wkbMultiPolygon or geomType == ogr.wkbMultiPolygonZM or geomType == ogr.wkbMultiPolygonM:
             ogr_points = []
             ogr_parts = [0]
             numPts = 0
@@ -579,8 +603,12 @@ class Row(filegdbapi.Row):
 
         i = 0
         for ogr_point in ogr_points:
-            pointArray[i].x = ogr_point[0]
-            pointArray[i].y = ogr_point[1]
+            pt = filegdbapi.Point()
+            pt.x = ogr_point[0]
+            pt.y = ogr_point[1]
+            pointArray[i] = pt
+            # pointArray[i].x = ogr_point[0]
+            # pointArray[i].y = ogr_point[1]
             if ogr.GT_HasM(geomType):
                 mArray[i] = ogr_point[3]
             if ogr.GT_HasZ(geomType):
