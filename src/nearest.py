@@ -291,7 +291,7 @@ def nearest_facilities_from_layer(
         log.info("开始导出计算结果...")
 
         export_to_file(G, out_path, start_points_df, target_points_df, nearest_facilities,
-                       travelCosts, layer_start, "nearest", out_type)
+                       travelCosts, layer_start, "nearest", out_type, cpu_core)
 
         end_time = time()
         log.info("计算完成, 结果保存在:{}, 共耗时{}秒".format(os.path.abspath(out_path), str(end_time - start_time)))
@@ -309,7 +309,7 @@ def nearest_facilities_from_layer(
 
 
 def export_to_file(G, out_path, start_points_df, target_points_df,
-                   res, costs, in_layer=None, layer_name="", out_type=0):
+                   res, costs, in_layer=None, layer_name="", out_type=0, cpu_core=-1):
     out_line_ds = None
     out_line_layer = None
     out_route_ds = None
@@ -416,23 +416,75 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
         #     out_route_layer.LoadOnlyMode(True)
         #     out_route_layer.SetWriteLock()
 
-        out_line_ds.StartTransaction(force=True)
         # for in_fea in mTqdm(in_layer, total=total_features):
         # with mTqdm(in_layer, total=total_features) as bar:
-        tasks = []
 
-        for start_fid, value in mTqdm(res.items(), total=len(res)):
-            # start_loc = start_points_df.loc[start_points_df['fid']==start_fid]
+        QueueManager.register('routesTransfer', routesTransfer)
+        with QueueManager() as manager:
+            pool = Pool(processes=cpu_core, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
+            shared_obj = manager.routesTransfer(G, res, start_points_dict, target_points_dict)
+
+            n = ceil(len(res) / cpu_core)  # 数据按照CPU数量分块
+
+            tqdm.set_lock(RLock())
+
+            input_param = []
+            ipos = 0
+            out_geoms = {}
+            lst = []
+            for start_fid, value in res.items():
+                # start_loc = start_points_df.loc[start_points_df['fid']==start_fid]
+                # in_fea = in_layer.GetFeature(start_fid)
+
+                # start_pt = start_points_dict[start_fid]
+                # target_distances = value['distance']
+                # target_routes = value['routes']
+                lst.append(start_fid)
+
+                if (icount + 1) % n == 0 or icount == len(res) - 1:
+                    # G, start_pt, target_pt, target_fid, target_routes
+                    input_param.append((shared_obj, lst, ipos))
+                    # processes.append(Process(target=nearest_facilities_from_point_worker,
+                    #                          args=(None, shared_obj, lst, travelCost, False, True)))
+                    lst = []
+                    ipos += 1
+
+                # for target_fid, dis in target_distances.items():
+                    # target_pt = target_points_dict[target_fid]
+                    # output_data(G, start_fid, target_fid, start_pt, target_pt, target_routes, dis,
+                    #             in_fea, out_line_layer, out_route_layer, panMap)
+                icount += 1
+
+            returns = pool.starmap(output_geometry_worker, input_param)
+
+            pool.close()
+            pool.join()
+
+            for _ in returns:
+                out_geoms.update(_)
+
+        tqdm.write("\r", end="")
+
+        out_line_ds.StartTransaction(force=True)
+        out_route_ds.StartTransaction(force=True)
+
+        for start_fid, geoms_dict in mTqdm(out_geoms.items(), total=len(out_geoms)):
             in_fea = in_layer.GetFeature(start_fid)
 
-            start_pt = start_points_dict[start_fid]
-            target_distances = value['distance']
-            target_routes = value['routes']
+            for target_fid, geom in geoms_dict.items():
+                dis = res[start_fid]['distance'][target_fid]
 
-            for target_fid, dis in target_distances.items():
-                output_data(G, start_fid, start_pt, target_points_dict, target_fid, target_routes, dis,
-                            in_fea, out_line_layer, out_route_layer, panMap)
-            icount += 1
+                out_value = {
+                    's_ID': str(start_fid),
+                    't_ID': str(target_fid),
+                    'cost': dis
+                }
+
+                line = geom[0]
+                lines = geom[1]
+
+                addFeature(in_fea, start_fid, line, out_line_layer, panMap, out_value)
+                addFeature(in_fea, start_fid, lines, out_route_layer, panMap, out_value)
 
         out_line_ds.CommitTransaction()
         out_line_ds.SyncToDisk()
@@ -456,10 +508,10 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
         del out_route_layer
 
 
-def output_data(G, start_fid, start_pt, target_points_dict, target_fid, target_routes, dis, in_fea,
+def output_data(G, start_fid, target_fid, start_pt, target_pt, target_routes, dis, in_fea,
                 out_line_layer, out_route_layer, panMap):
 
-    line, lines = output_geometry(G, start_pt, target_points_dict, target_fid, target_routes)
+    line, lines = output_geometry(G, start_pt, target_pt, target_fid, target_routes)
 
     out_value = {
         's_ID': str(start_fid),
@@ -471,8 +523,37 @@ def output_data(G, start_fid, start_pt, target_points_dict, target_fid, target_r
     addFeature(in_fea, start_fid, lines, out_route_layer, panMap, out_value)
 
 
-def output_geometry(G, start_pt, target_points_dict, target_fid, target_routes):
-    target_pt = target_points_dict[target_fid]
+def output_geometry_worker(shared_custom, lst, ipos):
+    G, res, start_points_dict, target_points_dict = shared_custom.task()
+
+    with lock:
+        bar = mTqdm(lst, desc="worker-{}".format(ipos), position=ipos, leave=False)
+
+    geoms_dict = {}
+    for start_fid in lst:
+        geoms = {}
+        start_pt = start_points_dict[start_fid]
+        match_df = res[start_fid]
+        target_routes = match_df['routes']
+
+        for target_fid, dis in target_routes.items():
+            target_pt = target_points_dict[target_fid]
+            line, lines = output_geometry(G, start_pt, target_pt, target_fid, target_routes)
+
+            geoms[target_fid] = (line, lines)
+
+        geoms_dict[start_fid] = geoms
+
+        with lock:
+            bar.update()
+
+    with lock:
+        bar.close()
+
+    return geoms_dict
+
+
+def output_geometry(G, start_pt, target_pt, target_fid, target_routes):
     route = target_routes[target_fid]
     # target_pt = target_points_df.loc[target_fid]['geom']
     line = ogr.Geometry(ogr.wkbLineString)
@@ -632,6 +713,21 @@ def nearest_facilities_from_point_worker(shared_custom, lst, travelCost, bRoutes
     #     connection.send(nearest_facilities)
     # else:
     #     return nearest_facilities
+
+class routesTransfer:
+    def __init__(self, G, res, start_points_dict, target_points_dict):
+        self.G = G
+        self.res = res
+        self.start_points_dict = start_points_dict
+        self.target_points_dict = target_points_dict
+        # self.nearest_facilities = nearest_facilities
+        # self.start_dict = start_dict
+        # self.target_dict = target_dict
+        # self.target_weight_dict = target_weight_dict
+        # self.layer_target = layer_target
+
+    def task(self):
+        return self.G, self.res, self.start_points_dict, self.target_points_dict
 
 
 if __name__ == '__main__':

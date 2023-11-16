@@ -417,6 +417,7 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
         #     out_route_layer.SetWriteLock()
 
         out_line_ds.StartTransaction(force=True)
+        out_route_ds.StartTransaction(force=True)
         # for in_fea in mTqdm(in_layer, total=total_features):
         # with mTqdm(in_layer, total=total_features) as bar:
         tasks = []
