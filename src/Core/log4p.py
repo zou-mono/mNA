@@ -29,7 +29,7 @@ if not os.path.exists(log_path):
 
 # 文件的命名
 # c_logName = os.path.join(log_path, '%s.log' % (os.path.basename(os.path.realpath(sys.argv[0])).split('.')[0] + '_' + time.strftime('%Y-%m-%d-%H-%M-%S')))
-c_logName = os.path.join(log_path, '%s.log' % ("oneTools" + '_' + time.strftime('%Y-%m-%d-%H-%M-%S')))
+c_logName = os.path.join(log_path, '%s.log' % ("mNA" + '_' + time.strftime('%Y-%m-%d-%H-%M-%S')))
 
 
 log_colors_config = {

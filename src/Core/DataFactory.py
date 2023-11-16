@@ -226,7 +226,7 @@ class workspaceFactory(object):
             out_layer = None
 
 
-def addFeature(in_feature, fid, geometry, out_layer, panMap, icount, new_values=None):
+def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None):
     try:
         # if isinstance(out_layer, ogr.Layer):
         out_Feature = ogr.Feature(out_layer.GetLayerDefn())
@@ -249,13 +249,13 @@ def addFeature(in_feature, fid, geometry, out_layer, panMap, icount, new_values=
         del out_Feature
         return 1
     except UnicodeEncodeError:
-        log.error("错误发生在第{}个要素.\n{}".format(icount, "字符编码无法转换，请检查输入文件的字段!"))
+        log.error("错误发生在第{}个要素.\n{}".format(fid, "字符编码无法转换，请检查输入文件的字段!"))
         return -1
     except RuntimeError:
-        log.error("错误发生在第{}个要素.\n{}".format(icount, "无法拷贝属性值"))
+        log.error("错误发生在第{}个要素.\n{}".format(fid, "无法拷贝属性值"))
         return -2
     except:
-        log.error("错误发生在第{}个要素.\n{}".format(icount, traceback.format_exc()))
+        log.error("错误发生在第{}个要素.\n{}".format(fid, traceback.format_exc()))
         return -10000
 
 

@@ -389,11 +389,11 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
 
         wks = workspaceFactory().get_factory(out_type_f)
         out_line_ds,  out_line_layer = wks.createFromExistingDataSource(in_layer, line_out_path, line_layer_name, srs,
-                                                                        datasetCreationOptions, layerCreationOptions, new_fields,
-                                                                        geom_type=ogr.wkbLineString, open=True)
+                                         datasetCreationOptions, layerCreationOptions, new_fields,
+                                         geom_type=ogr.wkbLineString, open=True)
         out_route_ds, out_route_layer = wks.createFromExistingDataSource(in_layer, route_out_path, route_layer_name, srs,
-                                                                         datasetCreationOptions, layerCreationOptions, new_fields,
-                                                                         geom_type=ogr.wkbMultiLineString, open=True)
+                                         datasetCreationOptions, layerCreationOptions, new_fields,
+                                         geom_type=ogr.wkbMultiLineString, open=True)
 
         # if out_type_f == DataType.fileGDB:
         #     out_type_f = DataType.FGDBAPI
@@ -431,7 +431,7 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
 
             for target_fid, dis in target_distances.items():
                 output_data(G, start_fid, start_pt, target_points_dict, target_fid, target_routes, dis,
-                            in_fea, out_line_layer, out_route_layer, panMap)
+                                  in_fea, out_line_layer, out_route_layer, panMap)
             icount += 1
 
         out_line_ds.CommitTransaction()
@@ -457,7 +457,7 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
 
 
 def output_data(G, start_fid, start_pt, target_points_dict, target_fid, target_routes, dis, in_fea,
-                out_line_layer, out_route_layer, panMap):
+                            out_line_layer, out_route_layer, panMap):
 
     line, lines = output_geometry(G, start_pt, target_points_dict, target_fid, target_routes)
 
