@@ -232,66 +232,18 @@ def nearest_facilities_from_layer(
         log.info("重构后的图共有{}条边，{}个节点".format(len(G.edges), len(G)))
         df = target_points_df[target_points_df["nodeID"] != -1]
 
-        nearest_facilities = {}  # 存储起始设施可达的目标设施
-
         log.info("计算起始设施可达范围的目标设施...")
 
-        max_cost = max(travelCosts)
-
-        if cpu_core == 1:
-            for fid, start_node in mTqdm(zip(start_points_df['fid'], start_points_df['nodeID']), total=start_points_df.shape[0]):
-                if start_node == -1:
-                    continue
-
-                nf = nearest_facilities_from_point(G, start_node, df, travelCost=max_cost)
-
-                nearest_facilities[fid] = nf
-        else:
-            QueueManager.register('graphTransfer', GraphTransfer)
-            # conn1, conn2 = Pipe()
-
-            with QueueManager() as manager:
-                shared_obj = manager.graphTransfer(G, df)
-                # value = shared_obj.shortest(start_node, travelCost)
-                lst = []
-                # processes = []
-
-                start_nodes = []
-                for fid, start_node in zip(start_points_df['fid'], start_points_df['nodeID']):
-                    if start_node == -1:
-                        continue
-                    start_nodes.append((start_node, fid))
-
-                n = ceil(len(start_nodes) / cpu_core)  # 数据按照CPU数量分块
-
-                tqdm.set_lock(RLock())
-                pool = Pool(processes=cpu_core, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
-
-                input_param = []
-                ipos = 0
-                for i in range(len(start_nodes)):
-                    lst.append(start_nodes[i])
-
-                    if (i + 1) % n == 0 or i == len(start_nodes) - 1:
-                        input_param.append((shared_obj, lst, max_cost, True, True, ipos))
-                        # processes.append(Process(target=nearest_facilities_from_point_worker,
-                        #                          args=(None, shared_obj, lst, travelCost, False, True)))
-                        lst = []
-                        ipos += 1
-
-                returns = pool.starmap(nearest_facilities_from_point_worker, input_param)
-                pool.close()
-                pool.join()
-
-                for res in returns:
-                    nearest_facilities.update(res)
+        nearest_facilities = calculate2(G, df, start_points_df, target_points_df, travelCosts, cpu_core)
+        # nearest_facilities = calculate(G, df, start_points_df, travelCosts, cpu_core)
 
         tqdm.write("\r", end="")
 
         log.info("开始导出计算结果...")
 
-        export_to_file(G, out_path, start_points_df, target_points_df, nearest_facilities,
-                       travelCosts, layer_start, "nearest", out_type, cpu_core)
+        export_to_file2(nearest_facilities, out_path, layer_start, "nearest", travelCosts, out_type)
+        # export_to_file(G, out_path, start_points_df, target_points_df, nearest_facilities,
+        #                travelCosts, layer_start, "nearest", out_type, cpu_core)
 
         end_time = time()
         log.info("计算完成, 结果保存在:{}, 共耗时{}秒".format(os.path.abspath(out_path), str(end_time - start_time)))
@@ -306,6 +258,242 @@ def nearest_facilities_from_layer(
         del layer_start
         del layer_target
         del wks
+
+
+def calculate(G, df, start_points_df, travelCosts, cpu_core):
+    nearest_facilities = {}  # 存储起始设施可达的目标设施
+    max_cost = max(travelCosts)
+
+    if cpu_core == 1:
+        for fid, start_node in mTqdm(zip(start_points_df['fid'], start_points_df['nodeID']), total=start_points_df.shape[0]):
+            if start_node == -1:
+                continue
+
+            nf = nearest_facilities_from_point(G, start_node, df, travelCost=max_cost)
+
+            nearest_facilities[fid] = nf
+    else:
+        QueueManager.register('graphTransfer', GraphTransfer)
+        # conn1, conn2 = Pipe()
+
+        with QueueManager() as manager:
+            shared_obj = manager.graphTransfer(G, df)
+            # value = shared_obj.shortest(start_node, travelCost)
+            lst = []
+            # processes = []
+
+            start_nodes = []
+            for fid, start_node in zip(start_points_df['fid'], start_points_df['nodeID']):
+                if start_node == -1:
+                    continue
+                start_nodes.append((start_node, fid))
+
+            n = ceil(len(start_nodes) / cpu_core)  # 数据按照CPU数量分块
+
+            tqdm.set_lock(RLock())
+            pool = Pool(processes=cpu_core, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
+
+            input_param = []
+            ipos = 0
+            for i in range(len(start_nodes)):
+                lst.append(start_nodes[i])
+
+                if (i + 1) % n == 0 or i == len(start_nodes) - 1:
+                    input_param.append((shared_obj, lst, max_cost, True, True, ipos))
+                    # processes.append(Process(target=nearest_facilities_from_point_worker,
+                    #                          args=(None, shared_obj, lst, travelCost, False, True)))
+                    lst = []
+                    ipos += 1
+
+            returns = pool.starmap(nearest_facilities_from_point_worker, input_param)
+            pool.close()
+            pool.join()
+
+            for res in returns:
+                nearest_facilities.update(res)
+
+    return nearest_facilities
+
+
+def calculate2(G, df, start_points_df, target_points_df, travelCosts, cpu_core):
+    nearest_facilities = {}  # 存储起始设施可达的目标设施
+
+    max_cost = max(travelCosts)
+
+    if cpu_core == 1:
+        for fid, start_node in mTqdm(zip(start_points_df['fid'], start_points_df['nodeID']), total=start_points_df.shape[0]):
+            if start_node == -1:
+                continue
+
+            nf = nearest_facilities_from_point(G, start_node, df, travelCost=max_cost)
+
+            nearest_facilities[fid] = nf
+    else:
+        start_points_dict = start_points_df.to_dict()['geom']
+        target_points_dict = target_points_df.to_dict()['geom']
+
+        QueueManager.register('routesTransfer', routesTransfer)
+        # conn1, conn2 = Pipe()
+
+        with QueueManager() as manager:
+            shared_obj = manager.routesTransfer(G, df, start_points_dict, target_points_dict)
+            # value = shared_obj.shortest(start_node, travelCost)
+            lst = []
+            # processes = []
+
+            start_nodes = []
+            for fid, start_node in zip(start_points_df['fid'], start_points_df['nodeID']):
+                if start_node == -1:
+                    continue
+                start_nodes.append((start_node, fid))
+
+            n = ceil(len(start_nodes) / cpu_core)  # 数据按照CPU数量分块
+
+            tqdm.set_lock(RLock())
+            pool = Pool(processes=cpu_core, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
+
+            input_param = []
+            ipos = 0
+            for i in range(len(start_nodes)):
+                lst.append(start_nodes[i])
+
+                if (i + 1) % n == 0 or i == len(start_nodes) - 1:
+                    input_param.append((shared_obj, lst, max_cost, ipos))
+                    # processes.append(Process(target=nearest_facilities_from_point_worker,
+                    #                          args=(None, shared_obj, lst, travelCost, False, True)))
+                    lst = []
+                    ipos += 1
+
+            returns = pool.starmap(nearest_geometry_from_point_worker, input_param)
+            pool.close()
+            pool.join()
+
+            for res in returns:
+                nearest_facilities.update(res)
+
+    return nearest_facilities
+
+
+def export_to_file2(res, out_path, in_layer, layer_name, costs, out_type):
+    out_line_ds = None
+    out_line_layer = None
+    out_route_ds = None
+    out_route_layer = None
+    out_type_f = None
+
+    try:
+        layer_name = check_layer_name(layer_name)
+
+        if out_type == DataType.csv.value:
+            if export_csv(out_path, layer_name, res, costs):
+                return True
+            else:
+                return False
+
+        if in_layer is not None:
+            in_layer.SetAttributeFilter("")
+            in_layer.ResetReading()
+
+        out_format = ""
+        srs = in_layer.GetSpatialRef()
+        inlayername = in_layer.GetName()
+
+        datasetCreationOptions = []
+        layerCreationOptions = []
+
+        if out_type == DataType.shapefile.value:
+            out_type_f = DataType.shapefile
+            layerCreationOptions = ['ENCODING=UTF-8', "2GB_LIMIT=NO"]
+        elif out_type == DataType.geojson.value:
+            out_type_f = DataType.geojson
+            gdal.SetConfigOption('ATTRIBUTES_SKIP', 'NO')
+            gdal.SetConfigOption('OGR_GEOJSON_MAX_OBJ_SIZE', '0')
+        elif out_type == DataType.fileGDB.value:
+            out_type_f = DataType.fileGDB
+            layerCreationOptions = ["FID=FID"]
+            gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
+        elif out_type == DataType.sqlite.value:
+            out_type_f = DataType.sqlite
+            datasetCreationOptions = ['SPATIALITE=YES']
+            layerCreationOptions = ['SPATIAL_INDEX=NO']
+            gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
+
+        out_suffix = DataType_suffix[out_type_f]
+
+        new_fields = []
+        new_fields.append(ogr.FieldDefn('s_ID', ogr.OFTString))
+        new_fields.append(ogr.FieldDefn('t_ID', ogr.OFTString))
+        new_fields.append(ogr.FieldDefn('cost', ogr.OFTReal))
+
+        poSrcFDefn = in_layer.GetLayerDefn()
+        nSrcFieldCount = poSrcFDefn.GetFieldCount()
+        panMap = [-1] * nSrcFieldCount
+
+        for iField in range(poSrcFDefn.GetFieldCount()):
+            poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
+            iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
+            if iDstField >= 0:
+                panMap[iField] = iDstField
+
+        cost = max(costs)  # 只导出最大距离，其他的可以从最大距离中筛选，不重复导出
+
+        # for cost in costs:
+
+        line_layer_name = "lines_{}_{}".format(layer_name, str(cost))
+        route_layer_name = "routes_{}_{}".format(layer_name, str(cost))
+        line_layer_name = check_layer_name(line_layer_name)
+        route_layer_name = check_layer_name(route_layer_name)
+
+        line_out_path = os.path.join(out_path, "{}.{}".format(line_layer_name, out_suffix))
+        route_out_path = os.path.join(out_path, "{}.{}".format(route_layer_name, out_suffix))
+
+        wks = workspaceFactory().get_factory(out_type_f)
+        out_line_ds,  out_line_layer = wks.createFromExistingDataSource(in_layer, line_out_path, line_layer_name, srs,
+                                                                        datasetCreationOptions, layerCreationOptions, new_fields,
+                                                                        geom_type=ogr.wkbLineString, open=True)
+        out_route_ds, out_route_layer = wks.createFromExistingDataSource(in_layer, route_out_path, route_layer_name, srs,
+                                                                         datasetCreationOptions, layerCreationOptions, new_fields,
+                                                                         geom_type=ogr.wkbMultiLineString, open=True)
+
+        out_line_ds.StartTransaction(force=True)
+        out_route_ds.StartTransaction(force=True)
+
+        for start_fid, geoms_dict in mTqdm(res.items(), total=len(res)):
+            in_fea = in_layer.GetFeature(start_fid)
+
+            for target_fid, target_dict in geoms_dict.items():
+                out_value = {
+                    's_ID': str(start_fid),
+                    't_ID': str(target_fid),
+                    'cost': target_dict[2]
+                }
+
+                line = target_dict[0]
+                lines = target_dict[1]
+
+                addFeature(in_fea, start_fid, line, out_line_layer, panMap, out_value)
+                addFeature(in_fea, start_fid, lines, out_route_layer, panMap, out_value)
+
+        out_line_ds.CommitTransaction()
+        out_line_ds.SyncToDisk()
+        out_route_ds.CommitTransaction()
+        out_route_ds.SyncToDisk()
+
+        return True
+    except:
+        log.error(traceback.format_exc())
+        return False
+    finally:
+        if out_line_ds is not None:
+            out_line_ds.Destroy()
+        out_line_ds = None
+
+        if out_route_ds is not None:
+            out_route_ds.Destroy()
+        out_route_ds = None
+
+        del out_line_layer
+        del out_route_layer
 
 
 def export_to_file(G, out_path, start_points_df, target_points_df,
@@ -538,7 +726,8 @@ def output_geometry_worker(shared_custom, lst, ipos):
 
         for target_fid, dis in target_routes.items():
             target_pt = target_points_dict[target_fid]
-            line, lines = output_geometry(G, start_pt, target_pt, target_fid, target_routes)
+            route = target_routes[target_fid]
+            line, lines = output_geometry(G, start_pt, target_pt, route)
 
             geoms[target_fid] = (line, lines)
 
@@ -553,8 +742,8 @@ def output_geometry_worker(shared_custom, lst, ipos):
     return geoms_dict
 
 
-def output_geometry(G, start_pt, target_pt, target_fid, target_routes):
-    route = target_routes[target_fid]
+def output_geometry(G, start_pt, target_pt, route):
+    # route = target_routes[target_fid]
     # target_pt = target_points_df.loc[target_fid]['geom']
     line = ogr.Geometry(ogr.wkbLineString)
     line.AddPoint_2D(start_pt.x, start_pt.y)
@@ -649,6 +838,48 @@ def nearest_facilities_from_point(G, start_node, target_df,
 
     if bDistances:
         return match_distances
+
+
+def nearest_geometry_from_point_worker(shared_custom, lst, travelCost, ipos=0):
+    G, target_df, start_points_dict, target_points_dict = shared_custom.task()
+
+    nearest_geometry = {}
+
+    with lock:
+        bar = mTqdm(lst, desc="worker-{}".format(ipos), position=ipos, leave=False)
+    # with mTqdm(lst, desc=current_process().name, position=ipos, leave=False) as bar:
+    for t in lst:
+        start_node = t[0]
+        start_fid = t[1]
+        start_pt = start_points_dict[start_fid]
+
+        try:
+            distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
+                                                          cutoff=travelCost)
+
+            geoms = {}
+            if len(routes) > 1:  # 只有一个是本身，不算入搜索结果
+                match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
+
+                for match_node, target_fid in zip(match_df["nodeID"], match_df["fid"]):
+                    target_pt = target_points_dict[target_fid]
+                    route = routes[match_node]
+
+                    line, lines = output_geometry(G, start_pt, target_pt, route)
+                    geoms[target_fid] = (line, lines, distances[match_node])
+
+            nearest_geometry[start_fid] = geoms
+
+            with lock:
+                bar.update()
+        except:
+            log.error("发生错误节点:{}".format(str(start_node)))
+            continue
+
+    with lock:
+        bar.close()
+
+    return nearest_geometry
 
 
 def nearest_facilities_from_point_worker(shared_custom, lst, travelCost, bRoutes=True,

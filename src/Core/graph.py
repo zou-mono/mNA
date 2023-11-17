@@ -676,8 +676,8 @@ def makeGraph(G: Graph, additionalPoints, o_max=-1, distance_tolerance=500, rtre
                     'reverse_eid': None,   # 对向边的eid
                     'nodes': [(o_max, ne)]
                 }
-                if o_max == 786237:
-                    print("debug")
+                # if o_max == 786237:
+                #     print("debug")
                 node_ids[pos[0][i]] = o_max
 
             # target_node_ids.append(o_max)
