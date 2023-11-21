@@ -36,7 +36,8 @@ class workspaceFactory(object):
             wks = sqliteWorkspaceFactory()
         elif factory == DataType.FGDBAPI:
             wks = fgdbapiWorkspaceFactory()
-
+        elif factory == DataType.geojsonl:
+            wks = geojonslWorkspaceFactory()
         if wks is None:
             log.error("不支持的空间数据格式!")
 
@@ -113,6 +114,8 @@ class workspaceFactory(object):
             wks = self.get_factory(DataType.fileGDB)
         elif fileType == DataType.sqlite:
             wks = self.get_factory(DataType.sqlite)
+        elif fileType == DataType.geojsonl:
+            wks = self.get_factory(DataType.geojsonl)
         else:
             raise TypeError("不识别的图形文件格式!")
 
@@ -226,7 +229,8 @@ class workspaceFactory(object):
             out_layer = None
 
 
-def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None):
+def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None, bjson=False):
+    out_Feature = None
     try:
         # if isinstance(out_layer, ogr.Layer):
         out_Feature = ogr.Feature(out_layer.GetLayerDefn())
@@ -245,9 +249,12 @@ def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None):
             for k, v in new_values.items():
                 out_Feature.SetField(k, v)
 
-        out_layer.CreateFeature(out_Feature)
-        del out_Feature
-        return 1
+        if not bjson:
+            out_layer.CreateFeature(out_Feature)
+            return 1
+        else:
+            ret_str = out_Feature.ExportToJson()
+            return ret_str
     except UnicodeEncodeError:
         log.error("错误发生在第{}个要素.\n{}".format(fid, "字符编码无法转换，请检查输入文件的字段!"))
         return -1
@@ -257,6 +264,15 @@ def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None):
     except:
         log.error("错误发生在第{}个要素.\n{}".format(fid, traceback.format_exc()))
         return -10000
+    finally:
+        del out_Feature
+
+
+class geojonslWorkspaceFactory(workspaceFactory):
+    def __init__(self):
+        super().__init__()
+        self.driverName = "GeoJSONSeq"
+        self.driver = ogr.GetDriverByName(self.driverName)
 
 
 class fgdbapiWorkspaceFactory(workspaceFactory):

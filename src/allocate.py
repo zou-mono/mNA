@@ -287,7 +287,7 @@ def allocate_from_layer(
                     lst.append(start_nodes[i])
 
                     if (i + 1) % n == 0 or i == len(start_nodes) - 1:
-                        input_param.append((None, shared_obj, lst, max_cost, False, True, ipos))
+                        input_param.append((shared_obj, lst, max_cost, False, True, ipos))
                         # processes.append(Process(target=nearest_facilities_from_point_worker,
                         #                          args=(None, shared_obj, lst, travelCost, False, True)))
                         lst = []

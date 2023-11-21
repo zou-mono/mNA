@@ -1,10 +1,12 @@
 import asyncio
 import csv
+import io
 import os, sys
 import traceback
 from math import ceil
 from multiprocessing import current_process, Lock, Pool, RLock, cpu_count, freeze_support
 from time import time, strftime
+import jsonlines
 
 import shutil
 import click
@@ -246,7 +248,8 @@ def nearest_facilities_from_layer(
         log.info("开始导出计算结果...")
         srs = layer_start.GetSpatialRef()
         if combine_res_files(path_res, srs, max_cost, out_path, out_type):
-            remove_temp_folder(out_temp_path)
+            # remove_temp_folder(out_temp_path)
+            pass
         else:
             log.error("导出时发生错误, 请检查临时目录:{}".format(out_temp_path))
 
@@ -301,17 +304,15 @@ def combine_res_files(path_res, srs, cost, out_path, out_type):
         out_type_f = DataType.fileGDB
         layerCreationOptions = ["FID=FID"]
         gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
-        line_dst_name = os.path.join(out_path, "{}.gdb".format(check_layer_name("nearest_{}".format(str(cost)))))
-        route_dst_name = line_dst_name
-        # line_dst_name = os.path.join(out_path, "{}.gdb".format(out_line_layer_name))
-        # route_dst_name = os.path.join(out_path, "{}.gdb".format(out_route_layer_name))
+        line_dst_name = os.path.join(out_path, "{}.gdb".format(out_line_layer_name))
+        route_dst_name = os.path.join(out_path, "{}.gdb".format(out_route_layer_name))
     elif out_type == DataType.sqlite.value:
         out_type_f = DataType.sqlite
         datasetCreationOptions = ['SPATIALITE=YES']
         layerCreationOptions = ['SPATIAL_INDEX=NO']
         gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
-        line_dst_name = os.path.join(out_path, "{}.sqlite".format(check_layer_name("nearest_{}".format(str(cost)))))
-        route_dst_name = line_dst_name
+        line_dst_name = os.path.join(out_path, "{}.sqlite".format(out_line_layer_name))
+        route_dst_name = os.path.join(out_path, "{}.sqlite".format(out_route_layer_name))
     else:
         out_type_f = DataType.geojson
 
@@ -358,18 +359,10 @@ def combine_res_files(path_res, srs, cost, out_path, out_type):
 
     log.debug("正在导出line图层...")
     ogrmerge(line_src, line_dst_name, out_format, single_layer=True, layer_name_template=out_line_layer_name,
-             progress_callback=progress_callback, progress_arg=".")
+             src_geom_types=[ogr.wkbLineString], progress_callback=progress_callback, progress_arg=".")
     log.debug("正在导出route图层...")
-    if out_type == DataType.fileGDB.value or out_type == DataType.sqlite.value:
-        out_format = None
-        bUpdate = True
-        bAppend = True
-    else:
-        bUpdate = False
-        bAppend = False
-    ogrmerge(route_src, route_dst_name, out_format, single_layer=True, update=bUpdate, append=bAppend,
-             layer_name_template=out_route_layer_name,
-             progress_callback=progress_callback, progress_arg=".")
+    ogrmerge(route_src, route_dst_name, out_format, single_layer=True, layer_name_template=out_route_layer_name,
+             src_geom_types=[ogr.wkbMultiLineString], progress_callback=progress_callback, progress_arg=".")
 
     return True
 
@@ -1010,7 +1003,7 @@ def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMa
     try:
         G, target_df, start_points_dict, target_points_dict = shared_custom.task()
 
-        out_type_f = DataType.geojson
+        out_type_f = DataType.geojsonl
 
         if not os.path.exists(out_path):
             os.mkdir(out_path)
@@ -1076,8 +1069,119 @@ def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMa
                             'cost': distances[match_node]
                         }
 
+                        # ret_json = addFeature(in_fea, start_fid, line, out_line_layer, panMap, out_value)
                         addFeature(in_fea, start_fid, line, out_line_layer, panMap, out_value)
                         addFeature(in_fea, start_fid, lines, out_route_layer, panMap, out_value)
+                # nearest_geometry[start_fid] = geoms
+
+                with lock:
+                    bar.update()
+            except:
+                log.error("发生错误节点:{}".format(str(start_node)))
+                continue
+        with lock:
+            bar.close()
+
+        return line_out_path, route_out_path
+    except:
+        log.error(traceback.format_exc())
+        return None
+    finally:
+        with lock:
+            if out_line_ds is not None:
+                out_line_ds.Destroy()
+            del out_line_ds
+
+            if out_route_ds is not None:
+                out_route_ds.Destroy()
+            del out_route_ds
+
+            del out_line_layer
+            del out_route_layer
+            del in_wks
+            del wks
+            del ds_start
+            del in_layer
+
+
+def nearest_geometry_from_point_worker2(shared_custom, lst, cost, out_path, panMap, start_path, start_layer_name, ipos=0):
+    out_line_ds = None
+    out_line_layer = None
+    out_route_ds = None
+    out_route_layer = None
+    in_wks = None
+    wks = None
+    ds_start = None
+    in_layer = None
+
+    try:
+        G, target_df, start_points_dict, target_points_dict = shared_custom.task()
+
+        if not os.path.exists(out_path):
+            os.mkdir(out_path)
+
+        datasetCreationOptions = []
+        layerCreationOptions = []
+
+        in_wks = workspaceFactory()
+        ds_start = in_wks.get_ds(start_path)
+        in_layer, start_layer_name = in_wks.get_layer(ds_start, start_path, start_layer_name)
+        srs = in_layer.GetSpatialRef()
+
+        out_suffix = 'jsonl'
+
+        new_fields = []
+        new_fields.append(ogr.FieldDefn('s_ID', ogr.OFTString))
+        new_fields.append(ogr.FieldDefn('t_ID', ogr.OFTString))
+        new_fields.append(ogr.FieldDefn('cost', ogr.OFTReal))
+
+        line_layer_name = "lines_{}_{}".format(str(cost), str(ipos))
+        route_layer_name = "routes_{}_{}".format(str(cost), str(ipos))
+        line_layer_name = check_layer_name(line_layer_name)
+        route_layer_name = check_layer_name(route_layer_name)
+
+        line_out_path = os.path.join(out_path, "{}.jsonl".format(line_layer_name, out_suffix))
+        route_out_path = os.path.join(out_path, "{}.jsonl".format(route_layer_name, out_suffix))
+
+        line_writer = jsonlines.open(line_out_path, "w")
+        route_writer = jsonlines.open(route_out_path, "w")
+
+        with lock:
+            bar = mTqdm(lst, desc="worker-{}".format(ipos), position=ipos, leave=False)
+        # with mTqdm(lst, desc=current_process().name, position=ipos, leave=False) as bar:
+        for t in lst:
+            start_node = t[0]
+            start_fid = t[1]
+            start_pt = start_points_dict[start_fid]
+            in_fea = in_layer.GetFeature(start_fid)
+
+            try:
+                distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
+                                                              cutoff=cost)
+
+                # geoms = {}
+                if len(routes) > 1:  # 只有一个是本身，不算入搜索结果
+                    match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
+
+                    for match_node, target_fid in zip(match_df["nodeID"], match_df["fid"]):
+                        target_pt = target_points_dict[target_fid]
+                        route = routes[match_node]
+
+                        line, lines = output_geometry(G, start_pt, target_pt, route)
+                        # geoms[target_fid] = (line, lines, distances[match_node])
+
+                        out_value = {
+                            's_ID': str(start_fid),
+                            't_ID': str(target_fid),
+                            'cost': distances[match_node]
+                        }
+
+                        # ret_json = addFeature(in_fea, start_fid, line, out_line_layer, panMap, out_value)
+                        ret = addFeature(in_fea, start_fid, line, out_line_layer, panMap, out_value, bjson=True)
+                        line_writer.write(ret)
+
+                        ret = addFeature(in_fea, start_fid, lines, out_route_layer, panMap, out_value, bjson=True)
+                        route_writer.write(ret)
                 # nearest_geometry[start_fid] = geoms
 
                 with lock:

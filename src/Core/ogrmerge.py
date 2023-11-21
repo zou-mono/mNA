@@ -75,6 +75,7 @@ def ogrmerge(
         field_strategy: Optional[str] = None,
         src_layer_field_name: Optional[str] = None,
         src_layer_field_content: Optional[str] = None,
+        dst_geom_type: int = None,
         a_srs: Optional[str] = None,
         s_srs: Optional[str] = None,
         t_srs: Optional[str] = None,
@@ -240,9 +241,15 @@ def ogrmerge(
                 return 1
             for src_lyr_idx, src_lyr in enumerate(src_ds):
                 if src_geom_types:
-                    gt = ogr.GT_Flatten(src_lyr.GetGeomType())
-                    if gt not in src_geom_types:
-                        continue
+                    for feature in src_lyr:
+                        gt = feature.GetGeometryRef().GetGeometryType()
+                        if gt in src_geom_types:
+                            if dst_geom_type is None:
+                                dst_geom_type = gt
+                            break
+                    # gt = ogr.GT_Flatten(src_lyr.GetGeomType())
+                    # if gt not in src_geom_types:
+                    #     continue
 
                 if not ogr_vrt_union_layer_written:
                     ogr_vrt_union_layer_written = True
@@ -404,11 +411,13 @@ def ogrmerge(
             accessMode = "append"
         elif overwrite_layer:
             accessMode = "overwrite"
+        geom_str = ogr.GeometryTypeToName(dst_geom_type).replace(" ","")
         ret = gdal.VectorTranslate(
             dst_ds,
             vrt_filename,
             accessMode=accessMode,
             layerCreationOptions=lco,
+            geometryType=geom_str,
             skipFailures=skip_failures,
             callback=progress_callback,
             callback_data=progress_arg,

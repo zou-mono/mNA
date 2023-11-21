@@ -139,6 +139,9 @@ class GeoDatabase(filegdbapi.Geodatabase):
     def CommitTransaction(self):
         pass
 
+    def SyncToDisk(self):
+        pass
+
     def FlushCache(self):
         pass
 
