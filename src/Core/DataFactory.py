@@ -1,7 +1,7 @@
 import os
 import traceback
 
-from osgeo import ogr, osr
+from osgeo import ogr, osr, gdal
 
 # from UICore import fgdb, filegdbapi
 from osgeo.ogr import DataSource
@@ -12,7 +12,7 @@ from Core.log4p import Log
 from Core.core import DataType
 
 log = Log(__name__)
-
+# gdal.SetConfigOption('CPL_LOG', 'NUL')
 
 class workspaceFactory(object):
     def __init__(self):
