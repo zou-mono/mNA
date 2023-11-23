@@ -38,6 +38,8 @@ class workspaceFactory(object):
             wks = fgdbapiWorkspaceFactory()
         elif factory == DataType.geojsonl:
             wks = geojonslWorkspaceFactory()
+        elif factory == DataType.memory:
+            wks = memoryWorkspaceFactory()
         if wks is None:
             log.error("不支持的空间数据格式!")
 
@@ -76,7 +78,9 @@ class workspaceFactory(object):
         if open:
             return out_DS, out_layer
         else:
-            del out_DS
+            if out_DS is not None:
+                out_DS.Destroy()
+            out_DS = None
             del out_layer
             return None, None
 
@@ -240,7 +244,8 @@ def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None, bj
         #     out_Feature.SetGeometry2(geometry)
         #     out_layer.Insert(out_Feature)
 
-        out_Feature.SetFID(fid)
+        if fid > 0:
+            out_Feature.SetFID(fid)
         out_Feature.SetFromWithMap(in_feature, 1, panMap)
         out_Feature.SetGeometry(geometry)
         # poDstGeometry = poDstFeature.GetGeometryRef()
@@ -266,6 +271,13 @@ def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None, bj
         return -10000
     finally:
         del out_Feature
+
+
+class memoryWorkspaceFactory(workspaceFactory):
+    def __init__(self):
+        super().__init__()
+        self.driverName = "Memory"
+        self.driver = ogr.GetDriverByName(self.driverName)
 
 
 class geojonslWorkspaceFactory(workspaceFactory):

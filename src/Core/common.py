@@ -4,10 +4,13 @@ import sys
 from pathlib import Path
 from typing import Union, List
 
+import colorama
+from colorama import Fore
 from osgeo.ogr import Layer, GeometryTypeToName, FieldDefn, Feature, Geometry
 from osgeo import ogr, gdal
 from shapely import Point
 import pandas as pd
+from tqdm import tqdm
 
 PathLikeOrStr = Union[str, os.PathLike]
 
@@ -166,19 +169,52 @@ def DoesDriverHandleExtension(drv: gdal.Driver, ext: str) -> bool:
     return exts is not None and exts.lower().find(ext.lower()) >= 0
 
 
+def stdout_moveto(n):
+    sys.stdout.write('\n' * n + _term_move_up() * -n)
+    # getattr(sys.stdout, 'flush', lambda: None)()
+    sys.stdout.flush()
+
+
+def _term_move_up():  # pragma: no cover
+    return '' if (os.name == 'nt') and (colorama is None) else '\x1b[A'
+
+
+def stdout_clear(pos):
+    COLOUR_RESET = '\x1b[0m'
+    stdout_moveto(pos)
+    # sys.stdout.write(' ' * 100)
+    sys.stdout.write(f'\r{COLOUR_RESET}')  # place cursor back at the beginning of line
+    stdout_moveto(-pos)
+    sys.stdout.write(' ' * 100)
+    sys.stdout.write('\r')
+
+
 def progress_callback(complete, message, cb_data):
-    # Calculate percent by integer values (1, 2, ..., 100)
-    # if int(complete * 100) % 20 == 0:
-    #     percent = int(complete * 100)
-    #     print("{}%".format(percent))
-    # return 1
-    '''Emit progress report in numbers for 10% intervals and dots for 3%'''
-    if int(complete*100) % 10 == 0:
-        print(f'{complete*100:.0f}', end='', flush=True)
-    elif int(complete*100) % 3 == 0:
-        print(f'{cb_data}', end='', flush=True)
-    if int(complete*100) == 100:
-        print('\r', end='', flush=True)
+    # '''Emit progress report in numbers for 10% intervals and dots for 3%'''
+    # block = u'\u2588\u2588'
+    # ncol = 80
+    # # if int(complete*100) % 10 == 0:
+    # #     print(f'{complete*100:.0f}', end='', flush=True)
+    # if int(complete*100) % 3 == 0:
+    #     n = int(ncol * (complete*100 / 3) / 100)
+    #     # sys.stdout.write('\n')
+    #     # sys.stdout.write('')
+    #     # print(f'\r {complete*100:.0f}%{block}', end='', flush=True)
+    #     stdout_moveto(cb_data)
+    #     sys.stdout.write(f'\r {Fore.BLUE}{complete*100:.0f}% {block * n}')
+    #     sys.stdout.write('')
+    #     stdout_moveto(-cb_data)
+    # if int(complete*100) == 100:
+    #     # print('\r', end='', flush=True)
+    #     # sys.stdout.write(f'\r {COLOUR_RESET}')
+    #     # sys.stdout.write('')
+    #     stdout_clear(cb_data)
+    bar = cb_data[0]
+    total = cb_data[1]
+    if int(complete*100) < 100:
+        bar.update(int(total * 0.01))
+    else:
+        bar.close()
 
 
 def singleton(cls):

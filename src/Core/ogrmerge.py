@@ -1,10 +1,12 @@
 import os
+import sys
 from typing import Optional, Sequence
 
+from colorama import Fore
 from osgeo import gdal, osr, ogr
 
-from Core.common import GetOutputDriverFor, PathLikeOrStr
-
+from Core.common import GetOutputDriverFor, PathLikeOrStr, progress_callback
+import colorama
 
 def _Esc(x):
     return gdal.EscapeString(x, gdal.CPLES_XML).decode("UTF-8")
@@ -81,8 +83,8 @@ def ogrmerge(
         t_srs: Optional[str] = None,
         dsco: Optional[Sequence[str]] = None,
         lco: Optional[Sequence[str]] = None,
-        progress_callback: Optional = None,
-        progress_arg: Optional = None,
+        progress_callback: Optional = progress_callback,
+        progress_arg: Optional = 0,
 ):
 
     src_datasets = src_datasets or []
