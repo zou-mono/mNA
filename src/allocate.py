@@ -71,6 +71,9 @@ lock = Lock()
 @click.option("--tweight-field", type=str, required=False, default="",
               help="输入目标设施数据的权重字段, 可选. 用于分配过程中提升设施的选取概率;"
                    "如果不提供,则所有目标设施选取权重根据距离的倒数来定义.")
+# @click.option("--out-fields", '-f', type=int, required=False, multiple=True, default=[-99],
+#               help="输出数据保留原目标设施的字段编号, 可选, 默认全部保留, -1表示不保留任何字段, -99表示全部保留. "
+#                    "允许输入多个值，例如'-f 1 -f 2'表示保留第1和第2个字段.")
 @click.option("--cost", "-c", type=float, required=False, multiple=True, default=[sys.float_info.max],
               help="路径搜索范围, 超过范围的设施不计入搜索结果, 可选. 缺省值会将所有可达设施都加入结果,同时导致搜索速度极大下降, "
                    "建议根据实际情况输入合适的范围."
@@ -98,6 +101,18 @@ def allocate(network, network_layer, direction_field, forward_value, backward_va
     for c in cost:
         if c not in travelCosts:
             travelCosts.append(c)
+
+    # # -99 None 表示全部保留，-1 []表示不保留
+    # panMap = []
+    # for field in out_fields:
+    #     if field == -1:
+    #         panMap = []
+    #         break
+    #     if field == -99:
+    #         panMap = None
+    #         break
+    #     if field not in panMap:
+    #         panMap.append(field)
 
     if out_type.lower() == 'shp':
         out_type = DataType.shapefile.value
@@ -151,6 +166,7 @@ def allocate_from_layer(
         start_weight_field="",
         target_weight_field="",
         out_path="res",
+        panMap=None,
         travelCosts=[sys.float_info.max],
         direction_field="",
         forwardValue="",
@@ -201,7 +217,7 @@ def allocate_from_layer(
         ds_start = wks.get_ds(start_path)
         layer_start, start_layer_name = wks.get_layer(ds_start, start_path, start_layer_name)
         # layer_start = init_check(layer_start, start_capacity_field, "起始")
-        bflag, start_capacity, start_capacity_dict, start_capacity_idx, __ = \
+        bflag, _, start_capacity, start_capacity_dict, start_capacity_idx, __ = \
             init_check(layer_start, start_capacity_field, "起始")
         if not bflag:
             return
@@ -210,7 +226,7 @@ def allocate_from_layer(
         ds_target = wks.get_ds(target_path)
         layer_target, target_layer_name = wks.get_layer(ds_target, target_path, target_layer_name)
         target_weight_idx = layer_target.FindFieldIndex(target_weight_field, False)
-        bflag, target_capacity, target_capacity_dict, target_capacity_idx, target_weight_dict = \
+        bflag, _, target_capacity, target_capacity_dict, target_capacity_idx, target_weight_dict = \
             init_check(layer_target, target_capacity_field, "目标", target_weight_idx)
         if not bflag:
             return
@@ -376,10 +392,10 @@ def allocate_from_layer(
 
             log.debug("正在导出起始设施分配结果...")
             bflag1 = export_to_file(start_path, out_path, start_res, start_capacity_dict, travelCosts, layer_start,
-                           layer_name="start_capacity", out_type=out_type)
+                           layer_name="start_capacity", panMap=panMap, out_type=out_type)
             log.debug("正在导出目标设施分配结果...")
             bflag2 = export_to_file(target_path, out_path, target_res, target_capacity_dict, travelCosts, layer_target,
-                           layer_name="target_capacity", out_type=out_type)
+                           layer_name="target_capacity", panMap=panMap, out_type=out_type)
 
         end_time = time()
 
@@ -417,7 +433,8 @@ def export_csv(out_path, layer_name, res, capacity_dict, costs):
         return False
 
 
-def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, layer_name="", out_type=DataType.csv.value):
+def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, layer_name="", panMap=None,
+                   out_type=DataType.csv.value):
     out_ds = None
     out_layer = None
     out_type_f = None

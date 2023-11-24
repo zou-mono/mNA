@@ -80,10 +80,12 @@ class workspaceFactory(object):
                 del new_field
         else:
             for i in panMap:
-                fieldName = in_defn.GetFieldDefn(i).GetName()
-                fieldTypeCode = in_defn.GetFieldDefn(i).GetType()
-                new_field = ogr.FieldDefn(fieldName, fieldTypeCode)
-                out_layer.CreateField(new_field)
+                if i > -1:
+                    fieldName = in_defn.GetFieldDefn(i).GetName()
+                    fieldTypeCode = in_defn.GetFieldDefn(i).GetType()
+                    new_field = ogr.FieldDefn(fieldName, fieldTypeCode)
+                    out_layer.CreateField(new_field)
+                    del new_field
 
         if new_fields is not None:
             for new_field in new_fields:
@@ -261,8 +263,7 @@ def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None, bj
 
         if fid > 0:
             out_Feature.SetFID(fid)
-        # if panMap is not None:
-        #     out_Feature.SetFromWithMap(in_feature, 1, panMap)
+        # out_Feature.SetFromWithMap(in_feature, 1, panMap)
         out_Feature.SetFrom(in_feature)
         out_Feature.SetGeometry(geometry)
         # poDstGeometry = poDstFeature.GetGeometryRef()

@@ -31,22 +31,43 @@ def check_field_type(field: FieldDefn):
         return False
 
 
-def init_check(layer, capacity_field=None, suffix="", panMap=None, target_weight_idx=-1):
+def init_check(layer, capacity_field=None, suffix="", target_weight_idx=-1, panMap=None):
     layer_name = layer.GetName()
 
+    poSrcFDefn = layer.GetLayerDefn()
+    nSrcFieldCount = poSrcFDefn.GetFieldCount()
+    res_panMap = [-1] * nSrcFieldCount
     if panMap is not None:
-        in_defn = layer.GetLayerDefn()
-        for i in panMap:
-            fieldDefn = in_defn.GetFieldDefn(i)
-            if fieldDefn is None:
-                panMap.remove(i)
+        for iField in panMap:
+            poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
+            # iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
+            if poSrcFieldDefn is not None:
+                res_panMap[iField] = iField
+    else:
+        for iField in range(poSrcFDefn.GetFieldCount()):
+            poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
+            iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
+            if iDstField >= 0:
+                res_panMap[iField] = iDstField
+
+    # res_panMap = []
+    # in_defn = layer.GetLayerDefn()
+    # if panMap is not None:
+    #     for i in range(in_defn.GetFieldCount()):
+    #         if i not in panMap:
+    #             res_panMap.append(-1)
+    #         else:
+    #             res_panMap.append(i)
+    # else:
+    #     for i in range(in_defn.GetFieldCount()):
+    #         res_panMap.append(i)
 
     if not check_geom_type(layer):
         log.error("{}设施数据不满足几何类型要求,只允许Polygon,multiPolygon,Point,multiPoint类型".format(suffix, layer_name))
         return False
     else:
         if capacity_field is None:
-            return True, panMap
+            return True, res_panMap
 
     capacity_idx = layer.FindFieldIndex(capacity_field, False)
     if capacity_idx == -1:
@@ -76,4 +97,4 @@ def init_check(layer, capacity_field=None, suffix="", panMap=None, target_weight
 
     log.info("{}设施总容量为{}".format(suffix, capacity))
 
-    return True, panMap, capacity, capacity_dict, capacity_idx, weight_dict
+    return True, res_panMap, capacity, capacity_dict, capacity_idx, weight_dict

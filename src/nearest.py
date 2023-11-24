@@ -218,7 +218,7 @@ def nearest_facilities_from_layer(
         log.info("读取起始设施数据,路径为{}...".format(start_path))
         ds_start = wks.get_ds(start_path)
         layer_start, start_layer_name = wks.get_layer(ds_start, start_path, start_layer_name)
-        bflag, panMap, *_ = init_check(layer_start, None, "起始", panMap)
+        bflag, panMap, *_ = init_check(layer_start, None, "起始", panMap=panMap)
         if not bflag:
             return
 
@@ -509,9 +509,9 @@ def combine_res_files(path_res, srs, cost, out_path, out_type):
         pool = Pool(processes=2, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
 
         input_param = []
-        input_param.append((line_paths, line_dst_name, out_format, True, out_line_layer_name, ogr.wkbLineString,
-                            datasetCreationOptions, layerCreationOptions, total_num, 0))
         input_param.append((route_paths, route_dst_name, out_format, True, out_route_layer_name, ogr.wkbMultiLineString,
+                            datasetCreationOptions, layerCreationOptions, total_num, 0))
+        input_param.append((line_paths, line_dst_name, out_format, True, out_line_layer_name, ogr.wkbLineString,
                             datasetCreationOptions, layerCreationOptions, total_num, 1))
 
         pool.starmap(_ogrmerge, input_param)
@@ -618,16 +618,16 @@ def calculate2(G, start_path, start_layer_name, out_path, in_layer, df, start_po
     out_type_f = None
 
     try:
-        if panMap is None:
-            poSrcFDefn = in_layer.GetLayerDefn()
-            nSrcFieldCount = poSrcFDefn.GetFieldCount()
-            panMap = [-1] * nSrcFieldCount
-
-            for iField in range(poSrcFDefn.GetFieldCount()):
-                poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
-                iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
-                if iDstField >= 0:
-                    panMap[iField] = iDstField
+        # if panMap is None:
+        #     poSrcFDefn = in_layer.GetLayerDefn()
+        #     nSrcFieldCount = poSrcFDefn.GetFieldCount()
+        #     panMap = [-1] * nSrcFieldCount
+        #
+        #     for iField in range(poSrcFDefn.GetFieldCount()):
+        #         poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
+        #         iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
+        #         if iDstField >= 0:
+        #             panMap[iField] = iDstField
 
         start_points_dict = start_points_df.to_dict()['geom']
         target_points_dict = target_points_df.to_dict()['geom']
@@ -1192,6 +1192,10 @@ def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMa
         G, target_df, start_points_dict, target_points_dict = shared_custom.task()
 
         out_type_f = DataType.geojson
+
+        gdal.SetConfigOption('ATTRIBUTES_SKIP', 'NO')
+        gdal.SetConfigOption('OGR_GEOJSON_MAX_OBJ_SIZE', '0')
+        gdal.SetConfigOption('OLMD_FID64', 'YES')
 
         if not os.path.exists(out_path):
             os.mkdir(out_path)
