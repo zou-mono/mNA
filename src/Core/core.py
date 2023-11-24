@@ -22,6 +22,7 @@ class DataType(Enum):
     FGDBAPI = 9
     geojsonl = 10
     cad_dwg = 11
+    jsonfg  = 12
 
 
 DataType_suffix = {
@@ -31,7 +32,8 @@ DataType_suffix = {
     DataType.FGDBAPI: 'gdb',
     DataType.csv: 'csv',
     DataType.sqlite: 'sqlite',
-    DataType.geojsonl: "geojsonl"
+    DataType.geojsonl: "geojsonl",
+    DataType.jsonfg: "json"
 }
 
 DataType_dict = {
@@ -40,7 +42,8 @@ DataType_dict = {
     DataType.fileGDB: "FileGDB",
     DataType.cad_dwg: "CAD",
     DataType.sqlite: "SQLite",
-    DataType.geojsonl: "GeoJSONSeq"
+    DataType.geojsonl: "GeoJSONSeq",
+    DataType.jsonfg: "JSONFG"
 }
 
 

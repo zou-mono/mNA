@@ -86,6 +86,7 @@ def ogrmerge(
         progress_callback: Optional = progress_callback,
         progress_arg: Optional = 0,
 ):
+    gdal.SetConfigOption('CPL_LOG', 'NUL')
 
     src_datasets = src_datasets or []
     src_geom_types = src_geom_types or []

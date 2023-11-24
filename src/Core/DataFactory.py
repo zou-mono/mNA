@@ -40,6 +40,8 @@ class workspaceFactory(object):
             wks = geojonslWorkspaceFactory()
         elif factory == DataType.memory:
             wks = memoryWorkspaceFactory()
+        elif factory == DataType.jsonfg:
+            wks = jsonfgWorkspackeFactory()
         if wks is None:
             log.error("不支持的空间数据格式!")
 
@@ -57,18 +59,31 @@ class workspaceFactory(object):
 
     def createFromExistingDataSource(self, in_layer, out_path, layer_name, srs,
                                      datasetCreationOptions, layerCreationOptions, new_fields=None,
-                                     geom_type=ogr.wkbMultiLineString, open=True):
+                                     geom_type=ogr.wkbMultiLineString, panMap=None, open=True):
 
         out_DS = self.createDataSource(out_path, options=datasetCreationOptions)
         out_layer = out_DS.CreateLayer(layer_name, srs=srs, geom_type=geom_type, options=layerCreationOptions)
 
         in_defn = in_layer.GetLayerDefn()
-        for i in range(in_defn.GetFieldCount()):
-            fieldName = in_defn.GetFieldDefn(i).GetName()
-            fieldTypeCode = in_defn.GetFieldDefn(i).GetType()
-            new_field = ogr.FieldDefn(fieldName, fieldTypeCode)
-            out_layer.CreateField(new_field)
-            del new_field
+        # for i in range(in_defn.GetFieldCount()):
+        #     fieldName = in_defn.GetFieldDefn(i).GetName()
+        #     fieldTypeCode = in_defn.GetFieldDefn(i).GetType()
+        #     new_field = ogr.FieldDefn(fieldName, fieldTypeCode)
+        #     out_layer.CreateField(new_field)
+        #     del new_field
+        if panMap is None:
+            for i in range(in_defn.GetFieldCount()):
+                fieldName = in_defn.GetFieldDefn(i).GetName()
+                fieldTypeCode = in_defn.GetFieldDefn(i).GetType()
+                new_field = ogr.FieldDefn(fieldName, fieldTypeCode)
+                out_layer.CreateField(new_field)
+                del new_field
+        else:
+            for i in panMap:
+                fieldName = in_defn.GetFieldDefn(i).GetName()
+                fieldTypeCode = in_defn.GetFieldDefn(i).GetType()
+                new_field = ogr.FieldDefn(fieldName, fieldTypeCode)
+                out_layer.CreateField(new_field)
 
         if new_fields is not None:
             for new_field in new_fields:
@@ -246,7 +261,9 @@ def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None, bj
 
         if fid > 0:
             out_Feature.SetFID(fid)
-        out_Feature.SetFromWithMap(in_feature, 1, panMap)
+        # if panMap is not None:
+        #     out_Feature.SetFromWithMap(in_feature, 1, panMap)
+        out_Feature.SetFrom(in_feature)
         out_Feature.SetGeometry(geometry)
         # poDstGeometry = poDstFeature.GetGeometryRef()
 
@@ -271,6 +288,13 @@ def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None, bj
         return -10000
     finally:
         del out_Feature
+
+
+class jsonfgWorkspackeFactory(workspaceFactory):
+    def __init__(self):
+        super().__init__()
+        self.driverName = "JSONFG"
+        self.driver = ogr.GetDriverByName(self.driverName)
 
 
 class memoryWorkspaceFactory(workspaceFactory):

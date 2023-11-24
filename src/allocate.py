@@ -96,9 +96,7 @@ def allocate(network, network_layer, direction_field, forward_value, backward_va
     """设施容量分配算法"""
     travelCosts = list()
     for c in cost:
-        if c in travelCosts:
-            log.warning("cost参数存在重复值{}, 重复值不参与计算.".format(c))
-        else:
+        if c not in travelCosts:
             travelCosts.append(c)
 
     if out_type.lower() == 'shp':

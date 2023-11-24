@@ -69,6 +69,9 @@ concurrence_num = 1
 @click.option("--tpath-layer", type=str, required=False, default="",
               help="输入目标设施数据的图层名, 可选. 如果是文件数据库(gdb, sqlite)则必须提供, "
                    "如果是文件(shapefile, geojson)则不需要提供.")
+@click.option("--out-fields", '-f', type=int, required=False, multiple=True, default=[-99],
+              help="输出数据保留原目标设施的字段编号, 可选, 默认全部保留, -1表示不保留任何字段, -99表示全部保留. "
+                   "允许输入多个值，例如'-f 1 -f 2'表示保留第1和第2个字段.")
 # @click.option("--tcapacity-field", type=str, required=True,
 #               help="输入目标设施数据的容量字段, 必选.")
 # @click.option("--sweigth-field", type=str, required=True,
@@ -96,15 +99,27 @@ concurrence_num = 1
 @click.option("--cpu-count", type=int, required=False, default=1,
               help="多进程数量, 可选, 默认为1, 即单进程. 小于0或者大于CPU最大核心数则进程数为最大核心数,否则为输入实际核心数.")
 def nearest(network, network_layer, direction_field, forward_value, backward_value, both_value,
-            default_direction, spath, spath_layer, tpath, tpath_layer, cost, distance_tolerance,
+            default_direction, spath, spath_layer, tpath, tpath_layer, out_fields, cost, distance_tolerance,
             out_type, out_graph_type, out_path, cpu_count):
     """网络距离可达设施搜索算法."""
-    travelCosts = list()
+    travelCosts = []
     for c in cost:
-        if c in travelCosts:
-            log.warning("cost参数存在重复值{}, 重复值不参与计算.".format(c))
-        else:
+        if c < 0:
+            c = -c
+        if c not in travelCosts:
             travelCosts.append(c)
+
+    # -99 None 表示全部保留，-1 []表示不保留
+    panMap = []
+    for field in out_fields:
+        if field == -1:
+            panMap = []
+            break
+        if field == -99:
+            panMap = None
+            break
+        if field not in panMap:
+            panMap.append(field)
 
     if out_type.lower() == 'shp':
         out_type = DataType.shapefile.value
@@ -131,6 +146,7 @@ def nearest(network, network_layer, direction_field, forward_value, backward_val
                                   target_path=tpath,
                                   target_layer_name=tpath_layer,
                                   travelCosts=travelCosts,
+                                  panMap=panMap,
                                   direction_field=direction_field,
                                   forwardValue=forward_value,
                                   backwardValue=backward_value,
@@ -155,6 +171,7 @@ def nearest_facilities_from_layer(
         forwardValue="",
         backwardValue="",
         bothValue="",
+        panMap=None,
         distance_tolerance=500,  # 从原始点到网络最近snap点的距离容差，如果超过说明该点无法到达网络，不进行计算
         defaultDirection=Direction.DirectionBoth,
         out_type=0,
@@ -201,7 +218,8 @@ def nearest_facilities_from_layer(
         log.info("读取起始设施数据,路径为{}...".format(start_path))
         ds_start = wks.get_ds(start_path)
         layer_start, start_layer_name = wks.get_layer(ds_start, start_path, start_layer_name)
-        if not init_check(layer_start, None, "起始"):
+        bflag, panMap, *_ = init_check(layer_start, None, "起始", panMap)
+        if not bflag:
             return
 
         log.info("读取目标设施数据,路径为{}...".format(target_path))
@@ -247,7 +265,8 @@ def nearest_facilities_from_layer(
                            travelCosts, layer_start, "nearest", out_type, cpu_core)
         else:
             out_temp_path = os.path.abspath(os.path.join(out_path, "temp"))
-            path_res = calculate2(G, start_path, start_layer_name, out_temp_path, layer_start, df, start_points_df, target_points_df, max_cost, cpu_core)
+            path_res = calculate2(G, start_path, start_layer_name, out_temp_path, layer_start, df, start_points_df,
+                                  target_points_df, panMap, max_cost, cpu_core)
 
             tqdm.write("\r", end="")
 
@@ -420,15 +439,7 @@ def jsonl_to_file_worker(paths, out_path, out_layer_name, total_num, out_type, i
                 ds = wks.openFromFile(l)
                 lyr = ds.GetLayer()
                 in_fea = lyr.GetFeature(0)
-                # out_layer.CreateFeature(in_fea)
-                # out_fea = in_fea.Clone()
                 in_fea.SetFID(icount)
-                # out_fea = in_fea.Clone()
-                # out_fea.SetFID(icount)
-                # out_Feature = ogr.Feature(in_fea.GetLayerDefn())
-                # out_fea.SetFID(fid)
-                # out_Feature.SetFromWithMap(in_fea, 1, panMap)
-                # out_Feature.SetGeometry(in_fea.GetGeometryRef())
                 out_layer.CreateFeature(in_fea)
                 # del out_fea
 
@@ -597,7 +608,7 @@ def calculate(G, df, start_points_df, max_cost, cpu_core):
     return nearest_facilities
 
 
-def calculate2(G, start_path, start_layer_name, out_path, in_layer, df, start_points_df, target_points_df, max_cost, cpu_core):
+def calculate2(G, start_path, start_layer_name, out_path, in_layer, df, start_points_df, target_points_df, panMap, max_cost, cpu_core):
     # line_out_path, line_layer_name, route_out_path, route_layer_name, panMap, out_type_f = \
     #     create_output_file(out_path, in_layer, layer_name, travelCosts, out_type)
     out_line_ds = None
@@ -607,15 +618,16 @@ def calculate2(G, start_path, start_layer_name, out_path, in_layer, df, start_po
     out_type_f = None
 
     try:
-        poSrcFDefn = in_layer.GetLayerDefn()
-        nSrcFieldCount = poSrcFDefn.GetFieldCount()
-        panMap = [-1] * nSrcFieldCount
+        if panMap is None:
+            poSrcFDefn = in_layer.GetLayerDefn()
+            nSrcFieldCount = poSrcFDefn.GetFieldCount()
+            panMap = [-1] * nSrcFieldCount
 
-        for iField in range(poSrcFDefn.GetFieldCount()):
-            poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
-            iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
-            if iDstField >= 0:
-                panMap[iField] = iDstField
+            for iField in range(poSrcFDefn.GetFieldCount()):
+                poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
+                iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
+                if iDstField >= 0:
+                    panMap[iField] = iDstField
 
         start_points_dict = start_points_df.to_dict()['geom']
         target_points_dict = target_points_df.to_dict()['geom']
@@ -1165,6 +1177,7 @@ def nearest_facilities_from_point(G, start_node, target_df,
         return match_distances
 
 
+#  多进程导出geojson
 def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMap, start_path, start_layer_name, ipos=0):
     out_line_ds = None
     out_line_layer = None
@@ -1209,10 +1222,10 @@ def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMa
         wks = workspaceFactory().get_factory(out_type_f)
         out_line_ds,  out_line_layer = wks.createFromExistingDataSource(in_layer, line_out_path, line_layer_name, srs,
                                                                         datasetCreationOptions, layerCreationOptions, new_fields,
-                                                                        geom_type=ogr.wkbLineString, open=True)
+                                                                        geom_type=ogr.wkbLineString, panMap=panMap, open=True)
         out_route_ds, out_route_layer = wks.createFromExistingDataSource(in_layer, route_out_path, route_layer_name, srs,
                                                                          datasetCreationOptions, layerCreationOptions, new_fields,
-                                                                         geom_type=ogr.wkbMultiLineString, open=True)
+                                                                         geom_type=ogr.wkbMultiLineString, panMap=panMap, open=True)
 
         with lock:
             bar = mTqdm(lst, desc="worker-{}".format(ipos), position=ipos, leave=False)
@@ -1282,6 +1295,7 @@ def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMa
             del in_layer
 
 
+#  多进程导出geojsonl
 def nearest_geometry_from_point_worker2(shared_custom, lst, cost, out_path, panMap, start_path, start_layer_name, ipos=0):
     out_line_ds = None
     out_line_layer = None
@@ -1316,7 +1330,8 @@ def nearest_geometry_from_point_worker2(shared_custom, lst, cost, out_path, panM
         in_layer, start_layer_name = in_wks.get_layer(ds_start, start_path, start_layer_name)
         srs = in_layer.GetSpatialRef()
 
-        out_suffix = 'jsonl'
+        # out_suffix = 'jsonl'
+        out_suffix = 'geojsonl'
 
         new_fields = []
         new_fields.append(ogr.FieldDefn('s_ID', ogr.OFTString))
