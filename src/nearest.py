@@ -1459,15 +1459,16 @@ def nearest_facilities_from_point_worker(shared_custom, lst, travelCost, bRoutes
             # for row in match_df.itertuples():
             #     match_node = row.nodeID
             #     target_fid = row.fid
-            for match_node, target_fid in zip(match_df["nodeID"], match_df["fid"]):
+            if len(match_df) > 0:
+                for match_node, target_fid in zip(match_df["nodeID"], match_df["fid"]):
 
-                if bRoutes:
-                    route = routes[match_node]
-                    match_routes[target_fid] = route
+                    if bRoutes:
+                        route = routes[match_node]
+                        match_routes[target_fid] = route
 
-                if bDistances:
-                    dis = distances[match_node]
-                    match_distances[target_fid] = dis
+                    if bDistances:
+                        dis = distances[match_node]
+                        match_distances[target_fid] = dis
 
         if bRoutes and bDistances:
             nearest_facilities[fid] = {
