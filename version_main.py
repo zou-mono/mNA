@@ -34,12 +34,12 @@ VSVersionInfo(
         u'000004b0',
         [StringStruct(u'CompanyName', u''),
         StringStruct(u'FileDescription', u'网络分析工具mNA'),
-        StringStruct(u'FileVersion', u'1.1.0'),
+        StringStruct(u'FileVersion', u'1.2.0'),
         StringStruct(u'InternalName', u''),
         StringStruct(u'LegalCopyright', u'MIT'),
         StringStruct(u'OriginalFilename', u'mNA.exe'),
         StringStruct(u'ProductName', u'mNA'),
-        StringStruct(u'ProductVersion', u'1.1.0')])
+        StringStruct(u'ProductVersion', u'1.2.0')])
       ]), 
     VarFileInfo([VarStruct(u'Translation', [0, 1200])])
   ]

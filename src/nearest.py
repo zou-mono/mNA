@@ -109,6 +109,18 @@ def nearest(network, network_layer, direction_field, forward_value, backward_val
         if c not in travelCosts:
             travelCosts.append(c)
 
+    if not os.path.exists(network):
+        log.error("网络数据文件不存在,请检查后重新计算!")
+        return
+
+    if not os.path.exists(spath):
+        log.error("起始设施数据文件不存在,请检查后重新计算!")
+        return
+
+    if not os.path.exists(tpath):
+        log.error("目标设施文件不存在,请检查后重新计算!")
+        return
+
     # -99 None 表示全部保留，-1 []表示不保留
     panMap = []
     for field in out_fields:
