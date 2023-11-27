@@ -14,17 +14,14 @@ import click
 import networkx as nx
 from osgeo import gdal, ogr
 from osgeo.ogr import CreateGeometryFromWkt
-from pandas import DataFrame
-from shapely import Point, wkt
 from tqdm import tqdm
 
 from Core import filegdbapi
-from Core.DataFactory import workspaceFactory, get_suffix, addFeature
+from Core.DataFactory import workspaceFactory, get_suffix, addFeature, creation_options
 from Core.check import init_check
-from Core.common import resource_path, set_main_path, get_centerPoints, stdout_moveto, stdout_clear
+from Core.common import resource_path, set_main_path, get_centerPoints
 from Core.core import DataType, QueueManager, check_layer_name, DataType_suffix, DataType_dict
 from Core.log4p import Log, mTqdm
-from colorama import Fore
 
 from Core.graph import makeGraph, Direction, GraphTransfer, import_graph_to_network, create_graph_from_file, \
     export_network_to_graph
@@ -347,30 +344,7 @@ def jsonl_to_file(path_res, in_layer, srs, cost, out_path, out_type):
     route_layer_name = check_layer_name(route_layer_name)
 
     try:
-        datasetCreationOptions = []
-        layerCreationOptions = []
-        if out_type == DataType.shapefile.value:
-            out_format = "ESRI Shapefile"
-            out_type_f = DataType.shapefile
-            layerCreationOptions = ['ENCODING=UTF-8', "2GB_LIMIT=NO"]
-        elif out_type == DataType.geojson.value:
-            out_type_f = DataType.geojson
-            out_format = "GeoJSON"
-            gdal.SetConfigOption('ATTRIBUTES_SKIP', 'NO')
-            gdal.SetConfigOption('OGR_GEOJSON_MAX_OBJ_SIZE', '0')
-        elif out_type == DataType.fileGDB.value:
-            out_format = "FileGDB"
-            out_type_f = DataType.fileGDB
-            layerCreationOptions = ["FID=FID"]
-            gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
-        elif out_type == DataType.sqlite.value:
-            out_format = "SQLite"
-            out_type_f = DataType.sqlite
-            datasetCreationOptions = ['SPATIALITE=YES']
-            layerCreationOptions = ['SPATIAL_INDEX=NO']
-            gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
-        else:
-            out_type_f = DataType.geojson
+        datasetCreationOptions, layerCreationOptions, out_type_f, out_format = creation_options(out_type)
 
         out_suffix = DataType_suffix[out_type_f]
 
@@ -480,32 +454,36 @@ def combine_res_files(path_res, srs, cost, out_path, out_type):
         out_line_layer_name = check_layer_name("nearest_line_{}".format(str(cost)))
         out_route_layer_name = check_layer_name("nearest_route_{}".format(str(cost)))
 
-        if out_type == DataType.shapefile.value:
-            out_type_f = DataType.shapefile
-            layerCreationOptions = ['ENCODING=UTF-8', "2GB_LIMIT=NO"]
-            line_dst_name = os.path.join(out_path, "{}.shp".format(out_line_layer_name))
-            route_dst_name = os.path.join(out_path, "{}.shp".format(out_route_layer_name))
-        elif out_type == DataType.geojson.value:
-            out_type_f = DataType.geojson
-            gdal.SetConfigOption('ATTRIBUTES_SKIP', 'NO')
-            gdal.SetConfigOption('OGR_GEOJSON_MAX_OBJ_SIZE', '0')
-            line_dst_name = os.path.join(out_path, "{}.geojson".format(out_line_layer_name))
-            route_dst_name = os.path.join(out_path, "{}.geojson".format(out_route_layer_name))
-        elif out_type == DataType.fileGDB.value:
-            out_type_f = DataType.fileGDB
-            layerCreationOptions = ["FID=FID"]
-            gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
-            line_dst_name = os.path.join(out_path, "{}.gdb".format(out_line_layer_name))
-            route_dst_name = os.path.join(out_path, "{}.gdb".format(out_route_layer_name))
-        elif out_type == DataType.sqlite.value:
-            out_type_f = DataType.sqlite
-            datasetCreationOptions = ['SPATIALITE=YES']
-            layerCreationOptions = ['SPATIAL_INDEX=NO']
-            gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
-            line_dst_name = os.path.join(out_path, "{}.sqlite".format(out_line_layer_name))
-            route_dst_name = os.path.join(out_path, "{}.sqlite".format(out_route_layer_name))
-        else:
-            out_type_f = DataType.geojson
+        datasetCreationOptions, layerCreationOptions, out_type_f, out_format = creation_options(out_type)
+
+        # if out_type == DataType.shapefile.value:
+        #     out_type_f = DataType.shapefile
+        #     layerCreationOptions = ['ENCODING=UTF-8', "2GB_LIMIT=NO"]
+        # elif out_type == DataType.geojson.value:
+        #     out_type_f = DataType.geojson
+        #     gdal.SetConfigOption('ATTRIBUTES_SKIP', 'NO')
+        #     gdal.SetConfigOption('OGR_GEOJSON_MAX_OBJ_SIZE', '0')
+        #     line_dst_name = os.path.join(out_path, "{}.geojson".format(out_line_layer_name))
+        #     route_dst_name = os.path.join(out_path, "{}.geojson".format(out_route_layer_name))
+        # elif out_type == DataType.fileGDB.value:
+        #     out_type_f = DataType.fileGDB
+        #     layerCreationOptions = ["FID=FID"]
+        #     gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
+        #     line_dst_name = os.path.join(out_path, "{}.gdb".format(out_line_layer_name))
+        #     route_dst_name = os.path.join(out_path, "{}.gdb".format(out_route_layer_name))
+        # elif out_type == DataType.sqlite.value:
+        #     out_type_f = DataType.sqlite
+        #     datasetCreationOptions = ['SPATIALITE=YES']
+        #     layerCreationOptions = ['SPATIAL_INDEX=NO']
+        #     gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
+        #     line_dst_name = os.path.join(out_path, "{}.sqlite".format(out_line_layer_name))
+        #     route_dst_name = os.path.join(out_path, "{}.sqlite".format(out_route_layer_name))
+        # else:
+        #     out_type_f = DataType.geojson
+
+        out_suffix = DataType_suffix[out_type_f]
+        line_dst_name = os.path.join(out_path, "{}.{}".format(out_line_layer_name, out_suffix))
+        route_dst_name = os.path.join(out_path, "{}.{}".format(out_route_layer_name, out_suffix))
 
         out_format = DataType_dict[out_type_f]
 

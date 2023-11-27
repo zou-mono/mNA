@@ -250,6 +250,40 @@ class workspaceFactory(object):
             out_layer = None
 
 
+def creation_options(out_type, out_path=None):
+    datasetCreationOptions = []
+    layerCreationOptions = []
+    if out_type == DataType.shapefile.value:
+        out_format = "ESRI Shapefile"
+        out_type_f = DataType.shapefile
+        layerCreationOptions = ['ENCODING=UTF-8', "2GB_LIMIT=NO"]
+    elif out_type == DataType.geojson.value:
+        out_type_f = DataType.geojson
+        out_format = "GeoJSON"
+        gdal.SetConfigOption('ATTRIBUTES_SKIP', 'NO')
+        gdal.SetConfigOption('OGR_GEOJSON_MAX_OBJ_SIZE', '0')
+    elif out_type == DataType.fileGDB.value:
+        out_format = "FileGDB"
+        out_type_f = DataType.fileGDB
+        layerCreationOptions = ["FID=FID"]
+        gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
+    elif out_type == DataType.sqlite.value:
+        out_format = "SQLite"
+        out_type_f = DataType.sqlite
+        datasetCreationOptions = ['SPATIALITE=YES']
+        layerCreationOptions = ['SPATIAL_INDEX=NO']
+        gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
+    else:
+        out_type_f = None
+        out_format = ""
+
+    if out_path is not None:
+        if not os.path.exists(out_path):
+            os.mkdir(out_path)
+
+    return datasetCreationOptions, layerCreationOptions, out_type_f, out_format
+
+
 def addFeature(in_feature, fid, geometry, out_layer, panMap, new_values=None, bjson=False):
     out_Feature = None
     try:

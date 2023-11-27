@@ -14,10 +14,10 @@ from tqdm import tqdm
 from multiprocessing import cpu_count
 
 from Core import filegdbapi
-from Core.DataFactory import workspaceFactory, get_suffix
+from Core.DataFactory import workspaceFactory, get_suffix, creation_options
 from Core.check import init_check
 from Core.common import get_centerPoints
-from Core.core import DataType, QueueManager, check_layer_name
+from Core.core import DataType, QueueManager, check_layer_name, DataType_suffix
 from Core.fgdb import FieldType
 from Core.filegdbapi import FieldDef
 from Core.graph import create_graph_from_file, Direction, makeGraph, export_network_to_graph, import_graph_to_network, \
@@ -472,33 +472,11 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
         datasetCreationOptions = []
         layerCreationOptions = []
         limit = -1
-        if out_type == DataType.shapefile.value:
-            out_format = "ESRI Shapefile"
-            out_type_f = DataType.shapefile
-            layerCreationOptions = ['ENCODING=UTF-8', "2GB_LIMIT=NO"]
-            if not os.path.exists(out_path):
-                os.mkdir(out_path)
-            out_path = os.path.join(out_path, "{}.shp".format(layer_name))
-        elif out_type == DataType.geojson.value:
-            out_type_f = DataType.geojson
-            out_format = "GeoJSON"
-            layerCreationOptions = ['NATIVE_DATA=TRUE', 'RFC7946=YES']
-            if not os.path.exists(out_path):
-                os.mkdir(out_path)
-            out_path = os.path.join(out_path, "{}.geojson".format(layer_name))
-        elif out_type == DataType.fileGDB.value:
-            out_format = "FileGDB"
-            out_type_f = DataType.fileGDB
-            out_path = os.path.join(out_path, "{}.gdb".format(layer_name))
-            layerCreationOptions = ["FID=FID"]
-            gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
-        elif out_type == DataType.sqlite.value:
-            out_format = "SQLite"
-            out_type_f = DataType.sqlite
-            datasetCreationOptions = ['SPATIALITE=YES']
-            layerCreationOptions = ['SPATIAL_INDEX=NO']
-            gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
-            out_path = os.path.join(out_path, "{}.sqlite".format(layer_name))
+
+        datasetCreationOptions, layerCreationOptions, out_type_f, out_format = creation_options(out_type, out_path)
+
+        out_suffix = DataType_suffix[out_type_f]
+        out_path = os.path.join(out_path, "{}.{}".format(layer_name, out_suffix))
 
         translateOptions = gdal.VectorTranslateOptions(format=out_format, srcSRS=srs, dstSRS=srs, layers=[inlayername],
                                                        accessMode="overwrite", layerName=layer_name,
