@@ -77,11 +77,11 @@ concurrence_num = 1
 #               help="输入目标设施数据的权重字段, 可选. 用于分配过程中提升设施的选取概率;"
 #                    "如果不提供,则所有目标设施选取权重根据距离的倒数来定义.")
 @click.option("--cost", "-c", type=float, required=False, multiple=True, default=[sys.float_info.max],
-              help="路径搜索范围, 超过范围的设施不计入搜索结果, 可选. 缺省值会将所有可达设施都加入结果,同时导致搜索速度极大下降, "
+              help="路径搜索范围, 超过范围的设施不计入搜索结果. 可选, 缺省值会将所有可达设施都加入结果,同时导致搜索速度极大下降, "
                    "建议根据实际情况输入合适的范围."
                    "允许输入多个值，例如'-c 1000 -c 1500'表示同时计算1000和1500两个范围的可达设施.")
 @click.option("--distance-tolerance", type=float, required=False, default=500,
-              help="定义目标设施到网络最近点的距离容差，如果超过说明该设施偏离网络过远，不参与计算, 可选, 默认值为500.")
+              help="定义目标设施到网络最近点的距离容差，如果超过说明该设施偏离网络过远，不参与计算. 可选, 默认值为500.")
 @click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite', 'csv'], case_sensitive=False),
               required=False, default='csv',
               help="输出文件格式, 默认值shp. 支持格式shp-ESRI Shapefile, geojson-geojson, filegdb-ESRI FileGDB, "
@@ -98,7 +98,7 @@ concurrence_num = 1
 def nearest(network, network_layer, direction_field, forward_value, backward_value, both_value,
             default_direction, spath, spath_layer, tpath, tpath_layer, out_fields, cost, distance_tolerance,
             out_type, out_graph_type, out_path, cpu_count):
-    """网络距离可达设施搜索算法."""
+    """可达范围的目标设施搜索算法"""
     travelCosts = []
     for c in cost:
         if c < 0:
@@ -455,31 +455,6 @@ def combine_res_files(path_res, srs, cost, out_path, out_type):
         out_route_layer_name = check_layer_name("nearest_route_{}".format(str(cost)))
 
         datasetCreationOptions, layerCreationOptions, out_type_f, out_format = creation_options(out_type)
-
-        # if out_type == DataType.shapefile.value:
-        #     out_type_f = DataType.shapefile
-        #     layerCreationOptions = ['ENCODING=UTF-8', "2GB_LIMIT=NO"]
-        # elif out_type == DataType.geojson.value:
-        #     out_type_f = DataType.geojson
-        #     gdal.SetConfigOption('ATTRIBUTES_SKIP', 'NO')
-        #     gdal.SetConfigOption('OGR_GEOJSON_MAX_OBJ_SIZE', '0')
-        #     line_dst_name = os.path.join(out_path, "{}.geojson".format(out_line_layer_name))
-        #     route_dst_name = os.path.join(out_path, "{}.geojson".format(out_route_layer_name))
-        # elif out_type == DataType.fileGDB.value:
-        #     out_type_f = DataType.fileGDB
-        #     layerCreationOptions = ["FID=FID"]
-        #     gdal.SetConfigOption('FGDB_BULK_LOAD', 'YES')
-        #     line_dst_name = os.path.join(out_path, "{}.gdb".format(out_line_layer_name))
-        #     route_dst_name = os.path.join(out_path, "{}.gdb".format(out_route_layer_name))
-        # elif out_type == DataType.sqlite.value:
-        #     out_type_f = DataType.sqlite
-        #     datasetCreationOptions = ['SPATIALITE=YES']
-        #     layerCreationOptions = ['SPATIAL_INDEX=NO']
-        #     gdal.SetConfigOption('OGR_SQLITE_SYNCHRONOUS', 'OFF')
-        #     line_dst_name = os.path.join(out_path, "{}.sqlite".format(out_line_layer_name))
-        #     route_dst_name = os.path.join(out_path, "{}.sqlite".format(out_route_layer_name))
-        # else:
-        #     out_type_f = DataType.geojson
 
         out_suffix = DataType_suffix[out_type_f]
         line_dst_name = os.path.join(out_path, "{}.{}".format(out_line_layer_name, out_suffix))

@@ -5,6 +5,7 @@ import sys
 
 from osgeo import gdal
 
+from accessibility import accessibility
 from allocate import allocate
 from build_graph import build_graph
 from nearest import nearest
@@ -20,4 +21,5 @@ if __name__ == '__main__':
     cli.add_command(allocate)
     cli.add_command(nearest)
     cli.add_command(build_graph)
+    cli.add_command(accessibility)
     cli()

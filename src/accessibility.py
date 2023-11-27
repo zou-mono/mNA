@@ -1,9 +1,12 @@
 import os.path
 import sys
 import traceback
+from multiprocessing import freeze_support
+from time import strftime
 
 import click
 
+from Core.core import DataType
 from Core.graph import Direction
 from Core.log4p import Log
 
@@ -44,6 +47,10 @@ log = Log(__name__)
               help="路径搜索范围, 超过范围的设施不计入搜索结果, 可选. 缺省值会将所有可达设施都加入结果,同时导致搜索速度极大下降, "
                    "建议根据实际情况输入合适的范围."
                    "允许输入多个值，例如'-c 1000 -c 1500'表示同时计算1000和1500两个范围的可达设施.")
+@click.option("--include-bounds", '-b', type=bool, required=False, default=False,
+              help="是否输出可达性边界每条边的起点和终点. 可选, 默认值为否.")
+@click.option("--concave-hull-ratio", '-r', type=click.FloatRange(0, 1, clamp=False), required=False, default=0.3,
+              help="可达性凹包的阈值, 取值范围0-1, 越接近1则凹包越平滑. 可选, 默认值为0.3.")
 @click.option("--distance-tolerance", type=float, required=False, default=500,
               help="定义目标设施到网络最近点的距离容差，如果超过说明该设施偏离网络过远，不参与计算, 可选, 默认值为500.")
 @click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite', 'csv'], case_sensitive=False),
@@ -59,29 +66,95 @@ log = Log(__name__)
               help="输出目录名, 可选, 默认值为当前目录下的'res'.")
 @click.option("--cpu-count", type=int, required=False, default=1,
               help="多进程数量, 可选, 默认为1, 即单进程. 小于0或者大于CPU最大核心数则进程数为最大核心数,否则为输入实际核心数.")
-# 计算从点出发的可达范围，输出包括可达点(service_nodes)、可达边(service_lines)、可达路径(service_routes)、可达范围(cover_area)
-def accessibility(input_network_data,
-                         input_facility_data,
-                         out_path="",
-                         travelCost=0.0,
-                         direction_field="",
-                         forwardValue="F",
-                         backwardValue="T",
-                         bothValue="B",
-                         include_bounds=False,
-                         concave_hull_threshold=0.3,
-                         defaultDirection=Direction.DirectionBoth,
-                         out_type=0):
+def accessibility(network, network_layer, direction_field, forward_value, backward_value, both_value,
+                  default_direction, spath, spath_layer, out_fields, cost, include_bounds, concave_hull_ratio,
+                  distance_tolerance, out_type, out_graph_type, out_path, cpu_count):
+    """设施可达范围算法"""
+    travelCosts = []
+    for c in cost:
+        if c < 0:
+            c = -c
+        if c not in travelCosts:
+            travelCosts.append(c)
 
-    pass
+    if not os.path.exists(network):
+        log.error("网络数据文件不存在,请检查后重新计算!")
+        return
+
+    if not os.path.exists(spath):
+        log.error("起始设施数据文件不存在,请检查后重新计算!")
+        return
+
+    if out_type.lower() == 'shp':
+        out_type = DataType.shapefile.value
+    elif out_type.lower() == 'geojson':
+        out_type = DataType.geojson.value
+    elif out_type.lower() == 'filegdb':
+        out_type = DataType.fileGDB.value
+    elif out_type.lower() == 'sqlite':
+        out_type = DataType.sqlite.value
+    elif out_type.lower() == 'csv':
+        out_type = DataType.csv.value
+
+    if not os.path.exists(out_path):
+        os.mkdir(out_path)
+
+    out_path = os.path.abspath(os.path.join(out_path, "accessibility_res_{}".format(strftime('%Y-%m-%d-%H-%M-%S'))))
+    if not os.path.exists(out_path):
+        os.mkdir(out_path)
+
+    # -99 None 表示全部保留，-1 []表示不保留
+    panMap = []
+    for field in out_fields:
+        if field == -1:
+            panMap = []
+            break
+        if field == -99:
+            panMap = None
+            break
+        if field not in panMap:
+            panMap.append(field)
+
+    accessible_from_layer(
+        network_path=network,
+        network_layer=network_layer,
+        start_path=spath,
+        start_layer_name=spath_layer,
+        travelCosts=travelCosts,
+        include_bounds=include_bounds,
+        concave_hull_ratio=concave_hull_ratio,
+        panMap=panMap,
+        direction_field=direction_field,
+        forwardValue=forward_value,
+        backwardValue=backward_value,
+        bothValue=both_value,
+        defaultDirection=default_direction,
+        distance_tolerance=distance_tolerance,
+        out_type=out_type,
+        out_graph_type=out_graph_type,
+        out_path=out_path,
+        cpu_core=cpu_count)
 
 
-def accessible_from_layer(graph,
-                          startPoints,
-                          snappedPoints,
-                          travelCost=0.0,
-                          include_bounds=False,
-                          concave_hull_threshold=0.3):
+def accessible_from_layer(
+        network_path,
+        network_layer,
+        start_path,
+        start_layer_name,
+        travelCosts=[sys.float_info.max],
+        include_bounds=False,
+        concave_hull_ratio=0.3,
+        direction_field="",
+        forwardValue="",
+        backwardValue="",
+        bothValue="",
+        panMap=None,
+        distance_tolerance=500,  # 从原始点到网络最近snap点的距离容差，如果超过说明该点无法到达网络，不进行计算
+        defaultDirection=Direction.DirectionBoth,
+        out_type=0,
+        out_graph_type='gpickle',
+        out_path="res",
+        cpu_core=1):
     pass
 
 
@@ -90,4 +163,6 @@ def export_to_file(geoms, fields, crs, source_attributes, out_path, out_type):
 
 
 if __name__ == '__main__':
-    pass
+    freeze_support()
+    # gdal.SetConfigOption('CPL_LOG', 'NUL')
+    accessibility()

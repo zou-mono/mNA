@@ -46,7 +46,7 @@ log = Log(__name__)
               help="输出路径, 可选, 默认值为当前目录下的res目录, 文件名默认为network.")
 def build_graph(network, network_layer, direction_field, forward_value, backward_value, both_value,
             default_direction, simplify, retain_all, out_type, out_path):
-    """从网络数据构建图结构."""
+    """构建图结构"""
 
     if out_path is None:
         out_dir = os.path.join(os.getcwd(), "res")
