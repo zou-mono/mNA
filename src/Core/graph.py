@@ -44,13 +44,13 @@ def import_graph_to_network(input_path, input_type):
     return net
 
 
-def export_network_to_graph(out_graph_type, net, out_path):
+def export_network_to_graph(out_graph_type, net, out_dir, out_file='network'):
     try:
         out_graph_type = out_graph_type.lower()
-        out_net_path = os.path.abspath(os.path.join(out_path, "network.{}".format(out_graph_type)))
+        out_net_path = os.path.abspath(os.path.join(out_dir, "{}.{}".format(out_file, out_graph_type)))
 
         if out_graph_type == 'gpickle':
-            out_net_path = os.path.abspath(os.path.join(out_path, "network.gpickle"))
+            out_net_path = os.path.abspath(os.path.join(out_dir, "{}.gpickle".format(out_file)))
             with open(out_net_path, 'wb') as f:
                 pickle.dump(net, f, pickle.HIGHEST_PROTOCOL)
         else:

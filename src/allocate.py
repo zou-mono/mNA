@@ -102,7 +102,19 @@ def allocate(network, network_layer, direction_field, forward_value, backward_va
         if c not in travelCosts:
             travelCosts.append(c)
 
-    # # -99 None 表示全部保留，-1 []表示不保留
+    if not os.path.exists(network):
+        log.error("网络数据文件不存在,请检查后重新计算!")
+        return
+
+    if not os.path.exists(spath):
+        log.error("起始设施数据文件不存在,请检查后重新计算!")
+        return
+
+    if not os.path.exists(tpath):
+        log.error("目标设施文件不存在,请检查后重新计算!")
+        return
+
+        # # -99 None 表示全部保留，-1 []表示不保留
     # panMap = []
     # for field in out_fields:
     #     if field == -1:
@@ -180,7 +192,7 @@ def allocate_from_layer(
 
     start_time = time()
 
-    wks = workspaceFactory()
+    # wks = workspaceFactory()
     ds_start = None
     ds_target = None
     layer_start = None
@@ -213,21 +225,23 @@ def allocate_from_layer(
             log.error("网络数据存在问题, 无法创建图结构.")
             return
 
-        log.info("读取起始设施数据,路径为{}...".format(start_path))
-        ds_start = wks.get_ds(start_path)
-        layer_start, start_layer_name = wks.get_layer(ds_start, start_path, start_layer_name)
-        # layer_start = init_check(layer_start, start_capacity_field, "起始")
-        bflag, _, start_capacity, start_capacity_dict, start_capacity_idx, __ = \
-            init_check(layer_start, start_capacity_field, "起始")
-        if not bflag:
-            return
-
         log.info("读取目标设施数据,路径为{}...".format(target_path))
+        wks = workspaceFactory()
         ds_target = wks.get_ds(target_path)
         layer_target, target_layer_name = wks.get_layer(ds_target, target_path, target_layer_name)
         target_weight_idx = layer_target.FindFieldIndex(target_weight_field, False)
         bflag, _, target_capacity, target_capacity_dict, target_capacity_idx, target_weight_dict = \
             init_check(layer_target, target_capacity_field, "目标", target_weight_idx)
+        if not bflag:
+            return
+
+        log.info("读取起始设施数据,路径为{}...".format(start_path))
+        wks = workspaceFactory()
+        ds_start = wks.get_ds(start_path)
+        layer_start, start_layer_name = wks.get_layer(ds_start, start_path, start_layer_name)
+        # layer_start = init_check(layer_start, start_capacity_field, "起始")
+        bflag, _, start_capacity, start_capacity_dict, start_capacity_idx, __ = \
+            init_check(layer_start, start_capacity_field, "起始")
         if not bflag:
             return
 
@@ -413,7 +427,6 @@ def allocate_from_layer(
         del ds_target
         del layer_start
         del layer_target
-        del wks
 
 
 def export_csv(out_path, layer_name, res, capacity_dict, costs):

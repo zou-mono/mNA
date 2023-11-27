@@ -17,7 +17,9 @@ def check_line_type(layer: Layer):
 def check_geom_type(layer: Layer):
     layer_type = layer.GetGeomType()
 
-    if layer_type == 3 or layer_type == 6 or layer_type == 1 or layer_type == 4:
+    if layer_type == ogr.wkbPoint or layer_type == ogr.wkbMultiPoint or layer_type == ogr.wkbPointM or \
+            layer_type == ogr.wkbPointZM or layer_type == ogr.wkbPoint25D or layer_type == ogr.wkbPolygon or \
+            layer_type == ogr.wkbPolygonM or layer_type == ogr.wkbPolygonZM or layer_type == ogr.wkbPolygon25D:
         return True
     else:
         return False
@@ -64,19 +66,19 @@ def init_check(layer, capacity_field=None, suffix="", target_weight_idx=-1, panM
 
     if not check_geom_type(layer):
         log.error("{}设施数据不满足几何类型要求,只允许Polygon,multiPolygon,Point,multiPoint类型".format(suffix, layer_name))
-        return False
+        return False, res_panMap, None, None, None, None
     else:
         if capacity_field is None:
-            return True, res_panMap
+            return True, res_panMap, None, None, None, None
 
     capacity_idx = layer.FindFieldIndex(capacity_field, False)
     if capacity_idx == -1:
         log.error("{}设施数据'{}'缺少容量字段{},无法进行后续计算".format(suffix, layer_name, capacity_field))
-        return False
+        return False, res_panMap, None, None, None, None
 
     if not check_field_type(layer.GetLayerDefn().GetFieldDefn(capacity_idx)):
         log.error("设施数据'{}'的字段{}不满足类型要求,只允许int, double类型".format(suffix, layer_name, capacity_field))
-        return False
+        return False, res_panMap, None, None, None, None
 
     query_str = '''"{}" > 0'''.format(capacity_field)
     layer.SetAttributeFilter(query_str)

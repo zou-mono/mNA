@@ -3,8 +3,10 @@
 block_cipher = None
 
 
-a = Analysis(['src\\allocate.py',
-              'src\\nearest_facilities.py',
+a = Analysis(['src\\main.py',
+              'src\\allocate.py',
+              'src\\nearest.py',
+              'src\\build_graph.py',
               'src\\person.py',
               'src\\facility.py',
               'src\\Core\\common.py',
@@ -15,7 +17,9 @@ a = Analysis(['src\\allocate.py',
               'src\\Core\\graph.py',
               'src\\Core\\log4p.py',
               'src\\Core\\simplification.py',
-              'src\\Core\\utils_graph.py',],
+              'src\\Core\\utils_graph.py',
+              'src\\Core\\check.py',
+              'src\\Core\\ogrmerge.py'],
              pathex=['D:\\空间模拟\\mNA'],
              binaries=[('D:\GDAL370\\bin\\gdal\\plugins-package', 'Library\\lib\\gdalplugins'),
                        ('D:\\GDAL370\\bin\\FileGDBAPI.dll', '.'),
