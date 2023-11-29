@@ -14,6 +14,8 @@ import click
 import networkx as nx
 from osgeo import gdal, ogr
 from osgeo.ogr import CreateGeometryFromWkt
+from shapely import geometry
+from shapely.ops import linemerge
 from tqdm import tqdm
 
 from Core import filegdbapi
@@ -283,8 +285,8 @@ def nearest_facilities_from_layer(
             srs = layer_start.GetSpatialRef()
             # if jsonl_to_file(path_res, layer_start, srs, max_cost, out_path, out_type):
             if combine_res_files(path_res, srs, max_cost, out_path, out_type):
-                # remove_temp_folder(out_temp_path)
-                pass
+                remove_temp_folder(out_temp_path)
+                # pass
             else:
                 log.error("导出时发生错误, 请检查临时目录:{}".format(out_temp_path))
 
@@ -1051,20 +1053,25 @@ def output_geometry(G, start_pt, target_pt, route):
     line.AddPoint_2D(start_pt.x, start_pt.y)
     line.AddPoint_2D(target_pt.x, target_pt.y)
 
-    lines = ogr.Geometry(ogr.wkbMultiLineString)
+    lines = []
+    # out_route = ogr.Geometry(ogr.wkbLineString)
     # path_graph = nx.path_graph(route)
     for s, t in zip(route[:-1], route[1:]):
         # for ea in path_graph.edges():
         eids = G[s][t]
         minlength = sys.float_info.max
         for key, v in eids.items():
-            if v['length'] < minlength:
+            if v['length'] <= minlength:
                 sel_key = key
         eid = G[s][t][sel_key]
-        l = CreateGeometryFromWkt(eid['geometry'].wkt)
-        lines.AddGeometryDirectly(l)
+        # l = CreateGeometryFromWkt(eid['geometry'].wkt)
+        # lines.AddGeometryDirectly(l)
+        lines.append(eid['geometry'])
+    out_route_geom = geometry.MultiLineString(lines)
+    out_route = linemerge(out_route_geom)
+    out_route = CreateGeometryFromWkt(out_route.wkt)
 
-    return line, lines
+    return line, out_route
 
 
 def export_csv(out_path, layer_name, res, costs):

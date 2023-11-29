@@ -114,7 +114,7 @@ def allocate(network, network_layer, direction_field, forward_value, backward_va
         log.error("目标设施文件不存在,请检查后重新计算!")
         return
 
-        # # -99 None 表示全部保留，-1 []表示不保留
+    # # -99 None 表示全部保留，-1 []表示不保留
     # panMap = []
     # for field in out_fields:
     #     if field == -1:

@@ -803,10 +803,13 @@ def _split_edges(G, points_along_edge):
 
             i = 0
             for u, v in zip(res_nodes[:-1], res_nodes[1:]):
+                # if u[0] == 9923 and v[0] == 951:
+                #     print("debug")
+
                 geom = split_geoms[len(split_geoms) - 1 - i]
                 G.add_edge(u[0], v[0],
                            **{**edge_attrs,
-                              'geometry': geom,
+                              'geometry': geom.reverse(),  # 这里geometry也要反向
                               'length': geom.length})
                 i += 1
 
