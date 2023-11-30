@@ -462,8 +462,6 @@ def combine_res_files(path_res, srs, cost, out_path, out_type):
         line_dst_name = os.path.join(out_path, "{}.{}".format(out_line_layer_name, out_suffix))
         route_dst_name = os.path.join(out_path, "{}.{}".format(out_route_layer_name, out_suffix))
 
-        out_format = DataType_dict[out_type_f]
-
         line_paths = []
         route_paths = []
         total_num = 0
@@ -500,10 +498,10 @@ def combine_res_files(path_res, srs, cost, out_path, out_type):
         return False
 
 
-def _ogrmerge(line_src, line_dst_name, out_format, single_layer, layer_name_template, dst_geom_type, dsco, lco, total_num, pos):
+def _ogrmerge(src_datasets, dst_filename, out_format, single_layer, layer_name_template, dst_geom_type, dsco, lco, total_num, pos):
     with lock:
         bar = mTqdm(range(total_num), desc="worker-{}".format(pos), position=pos, leave=False)
-    ogrmerge(line_src, line_dst_name, out_format, single_layer=single_layer, layer_name_template=layer_name_template,
+    ogrmerge(src_datasets, dst_filename, out_format, single_layer=single_layer, layer_name_template=layer_name_template,
          dst_geom_type=dst_geom_type, dsco=dsco, lco=lco, progress_callback=progress_callback, progress_arg=(bar, total_num))
 
 
@@ -585,17 +583,6 @@ def calculate2(G, start_path, start_layer_name, out_path, in_layer, df, start_po
     out_type_f = None
 
     try:
-        # if panMap is None:
-        #     poSrcFDefn = in_layer.GetLayerDefn()
-        #     nSrcFieldCount = poSrcFDefn.GetFieldCount()
-        #     panMap = [-1] * nSrcFieldCount
-        #
-        #     for iField in range(poSrcFDefn.GetFieldCount()):
-        #         poSrcFieldDefn = poSrcFDefn.GetFieldDefn(iField)
-        #         iDstField = poSrcFDefn.GetFieldIndex(poSrcFieldDefn.GetNameRef())
-        #         if iDstField >= 0:
-        #             panMap[iField] = iDstField
-
         start_points_dict = start_points_df.to_dict()['geom']
         target_points_dict = target_points_df.to_dict()['geom']
 
@@ -1225,7 +1212,7 @@ def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMa
                         target_pt = target_points_dict[target_fid]
                         route = routes[match_node]
 
-                        line, lines = output_geometry(G, start_pt, target_pt, route)
+                        out_line, out_route = output_geometry(G, start_pt, target_pt, route)
                         # geoms[target_fid] = (line, lines, distances[match_node])
 
                         out_value = {
@@ -1235,8 +1222,10 @@ def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMa
                         }
 
                         # ret_json = addFeature(in_fea, start_fid, line, out_line_layer, panMap, out_value)
-                        addFeature(in_fea, start_fid, line, out_line_layer, panMap, out_value)
-                        addFeature(in_fea, start_fid, lines, out_route_layer, panMap, out_value)
+                        if not out_line.IsEmpty():
+                            addFeature(in_fea, start_fid, out_line, out_line_layer, panMap, out_value)
+                        if not out_route.isEmpty():
+                            addFeature(in_fea, start_fid, out_route, out_route_layer, panMap, out_value)
 
                         icount += 1
                 # nearest_geometry[start_fid] = geoms

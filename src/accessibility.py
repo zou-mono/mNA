@@ -11,16 +11,18 @@ import shapely
 from osgeo import gdal, ogr
 from osgeo.ogr import CreateGeometryFromWkt
 from pandas import DataFrame
-from shapely import Point, geometry
+from shapely import Point, geometry, concave_hull
+from shapely.ops import linemerge
 from tqdm import tqdm
 
-from Core.DataFactory import get_suffix, workspaceFactory, addFeature
+from Core.DataFactory import get_suffix, workspaceFactory, addFeature, creation_options
 from Core.check import init_check
 from Core.common import get_centerPoints
 from Core.core import DataType, QueueManager, DataType_suffix, check_layer_name
 from Core.graph import Direction, import_graph_to_network, create_graph_from_file, export_network_to_graph, makeGraph, \
     GraphTransfer
 from Core.log4p import Log, mTqdm
+from Core.ogrmerge import ogrmerge
 from Core.utils_graph import split_line_by_point
 
 log = Log(__name__)
@@ -62,8 +64,8 @@ lock = Lock()
                    "允许输入多个值，例如'-c 1000 -c 1500'表示同时计算1000和1500两个范围的可达设施.")
 # @click.option("--include-bounds", '-b', type=bool, required=False, default=False,
 #               help="是否输出可达性边界每条边的起点和终点. 可选, 默认值为否.")
-@click.option("--concave-hull-ratio", '-r', type=click.FloatRange(0, 1, clamp=False), required=False, default=0.3,
-              help="可达性凹包的阈值, 取值范围0-1, 越接近1则凹包越平滑. 可选, 默认值为0.3.")
+@click.option("--concave-hull-ratio", '-r', type=click.FloatRange(0, 1, clamp=False), required=False, default=0.5,
+              help="可达性凹包的阈值, 取值范围0-1, 越接近1则凹包越平滑. 可选, 默认值为0.5.")
 @click.option("--distance-tolerance", type=float, required=False, default=500,
               help="定义目标设施到网络最近点的距离容差，如果超过说明该设施偏离网络过远，不参与计算, 可选, 默认值为500.")
 @click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite', 'csv'], case_sensitive=False),
@@ -213,13 +215,15 @@ def accessible_from_layer(
         log.info("计算设施位置坐标...")
         start_points_df = get_centerPoints(layer_start)
 
-        # 测试用点
-        start_points = [Point([519112.9421, 2505711.571])]
-        dic = {
-            'fid': 0,
-            'geom': start_points[0]
-        }
-        start_points_df = DataFrame(dic, index=[0])
+
+        # # 测试用点
+        # start_points = [Point([519112.9421, 2505711.571])]
+        # dic = {
+        #     'fid': 0,
+        #     'geom': start_points[0]
+        # }
+        # start_points_df = DataFrame(dic, index=[0])
+
 
         start_points = start_points_df['geom'].to_list()
 
@@ -242,22 +246,18 @@ def accessible_from_layer(
         else:
             out_temp_path = os.path.abspath(os.path.join(out_path, "temp"))
             path_res = calculate(G, start_path, start_layer_name, out_temp_path, start_points_df,
-                                 panMap, travelCosts, cpu_core)
+                                 panMap, travelCosts, concave_hull_ratio, cpu_core)
 
             tqdm.write("\r", end="")
 
-            # log.info("开始导出计算结果...")
-            # srs = layer_start.GetSpatialRef()
-            # # if jsonl_to_file(path_res, layer_start, srs, max_cost, out_path, out_type):
-            # if combine_res_files(path_res, srs, max_cost, out_path, out_type):
-            #     # remove_temp_folder(out_temp_path)
-            #     pass
-            # else:
-            #     log.error("导出时发生错误, 请检查临时目录:{}".format(out_temp_path))
-
-        # export_to_file2(nearest_facilities, out_path, layer_start, "nearest", travelCosts, out_type)
-        # export_to_file(G, out_path, start_points_df, target_points_df, nearest_facilities,
-        #                travelCosts, layer_start, "nearest", out_type, cpu_core)
+            log.info("开始导出计算结果...")
+            srs = layer_start.GetSpatialRef()
+            # if jsonl_to_file(path_res, layer_start, srs, max_cost, out_path, out_type):
+            if combine_res_files(path_res, travelCosts, out_path, out_type):
+                # remove_temp_folder(out_temp_path)
+                pass
+            else:
+                log.error("导出时发生错误, 请检查临时目录:{}".format(out_temp_path))
 
         end_time = time()
         log.info("计算完成, 结果保存在:{}, 共耗时{}秒".format(os.path.abspath(out_path), str(end_time - start_time)))
@@ -272,7 +272,104 @@ def accessible_from_layer(
         del wks
 
 
-def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap, costs, cpu_core):
+def combine_res_files(path_res, costs, out_path, out_type):
+    try:
+        # srs = in_layer.GetSpatialRef()
+        datasetCreationOptions = []
+        layerCreationOptions = []
+
+        datasetCreationOptions, layerCreationOptions, out_type_f, out_format = creation_options(out_type)
+        out_suffix = DataType_suffix[out_type_f]
+
+        range_paths_dict = {}
+        route_paths_dict = {}
+        node_paths_dict = {}
+        total_dict = {}
+        for path in path_res:
+            for cost in costs:
+                cost_path = path[cost]
+                if cost in range_paths_dict:
+                    range_paths_dict[cost].extend([cost_path['range']])
+                else:
+                    range_paths_dict[cost] = [cost_path['range']]
+
+                if cost in route_paths_dict:
+                    route_paths_dict[cost].extend([cost_path['routes']])
+                else:
+                    route_paths_dict[cost] = [cost_path['routes']]
+
+                if cost in node_paths_dict:
+                    node_paths_dict[cost].extend([cost_path['nodes']])
+                else:
+                    node_paths_dict[cost] = [cost_path['nodes']]
+
+                total_dict[cost] = cost_path['count']
+
+        tqdm.set_lock(RLock())
+        if len(costs) * 3 > cpu_count():
+            process_num = cpu_count()
+        else:
+            process_num = len(costs) * 3
+        pool = Pool(processes=process_num, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
+
+        input_param = []
+        ipos = 0
+        for cost in costs:
+            range_paths = range_paths_dict[cost]
+            route_paths = route_paths_dict[cost]
+            node_paths = node_paths_dict[cost]
+            total_num = total_dict[cost]
+
+            out_range_layer_name = check_layer_name("accessiblity_range_{}".format(str(cost)))
+            out_routes_layer_name = check_layer_name("accessiblity_routes_{}".format(str(cost)))
+            out_nodes_layer_name = check_layer_name("accessiblity_nodes_{}".format(str(cost)))
+
+            range_dst_name = os.path.join(out_path, "{}.{}".format(out_range_layer_name, out_suffix))
+            routes_dst_name = os.path.join(out_path, "{}.{}".format(out_routes_layer_name, out_suffix))
+            nodes_dst_name = os.path.join(out_path, "{}.{}".format(out_nodes_layer_name, out_suffix))
+
+            input_param.append((range_paths, range_dst_name, out_format, True, out_range_layer_name, ogr.wkbPolygon,
+                                datasetCreationOptions, layerCreationOptions, total_num, ipos))
+            ipos += 1
+            input_param.append((route_paths, routes_dst_name, out_format, True, out_routes_layer_name, ogr.wkbMultiLineString,
+                                datasetCreationOptions, layerCreationOptions, total_num, ipos))
+
+            ipos += 1
+            input_param.append((node_paths, nodes_dst_name, out_format, True, out_nodes_layer_name, ogr.wkbMultiPoint,
+                                datasetCreationOptions, layerCreationOptions, total_num, ipos))
+
+        pool.starmap(_ogrmerge, input_param)
+        pool.close()
+        pool.join()
+
+        tqdm.write("\r", end="")
+
+        return True
+    except:
+        log.error(traceback.format_exc())
+        return False
+
+
+def _ogrmerge(src_datasets, dst_filename, out_format, single_layer, layer_name_template, dst_geom_type, dsco, lco, total_num, pos):
+    with lock:
+        bar = mTqdm(range(total_num), desc="worker-{}".format(pos), position=pos, leave=False)
+    ogrmerge(src_datasets, dst_filename, out_format, single_layer=single_layer, layer_name_template=layer_name_template,
+             dst_geom_type=dst_geom_type, dsco=dsco, lco=lco, progress_callback=progress_callback, progress_arg=(bar, total_num))
+
+
+def progress_callback(complete, message, cb_data):
+    bar = cb_data[0]
+    total = cb_data[1]
+    if int(complete*100) < 100:
+        with lock:
+            # bar.update(total * int(complete ))
+            bar.update(int(total * 0.01))
+    else:
+        with lock:
+            bar.close()
+
+
+def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap, costs, concave_hull_ratio, cpu_core):
     # line_out_path, line_layer_name, route_out_path, route_layer_name, panMap, out_type_f = \
     #     create_output_file(out_path, in_layer, layer_name, travelCosts, out_type)
     out_line_ds = None
@@ -308,7 +405,7 @@ def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap
                 lst.append(start_nodes[i])
 
                 if (i + 1) % n == 0 or i == len(start_nodes) - 1:
-                    input_param.append((shared_obj, lst, costs, out_path, panMap, start_path, start_layer_name, ipos))
+                    input_param.append((shared_obj, lst, costs, out_path, panMap, start_path, start_layer_name, concave_hull_ratio, ipos))
                     lst = []
                     ipos += 1
 
@@ -337,11 +434,13 @@ def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap
 
 
 #  多进程导出geojson
-def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, panMap, start_path, start_layer_name, ipos=0):
-    out_line_ds = None
-    out_line_layer = None
+def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, panMap, start_path, start_layer_name, concave_hull_ratio, ipos=0):
+    out_range_ds = None
+    out_range_layer = None
     out_route_ds = None
     out_route_layer = None
+    out_node_ds = None
+    out_node_layer = None
     in_wks = None
     wks = None
     ds_start = None
@@ -385,29 +484,31 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
         new_fields.append(ogr.FieldDefn('s_ID', ogr.OFTString))
         new_fields.append(ogr.FieldDefn('s_POS', ogr.OFTString))
 
+        out_paths_dict = {}  # 返回分块文件路径
+
         for cost in costs:
             nodes_layer_name = check_layer_name("nodes_{}_{}".format(str(cost), str(ipos)))
             routes_layer_name = check_layer_name("routes_{}_{}".format(str(cost), str(ipos)))
             range_layer_name = check_layer_name("range_{}_{}".format(str(cost), str(ipos)))
 
-            out_path_range = os.path.join(out_path_range, "{}.{}".format(range_layer_name, out_suffix))
-            out_path_routes = os.path.join(out_path_routes, "{}.{}".format(routes_layer_name, out_suffix))
-            out_path_nodes = os.path.join(out_path_nodes, "{}.{}".format(nodes_layer_name, out_suffix))
+            out_file_range = os.path.join(out_path_range, "{}.{}".format(range_layer_name, out_suffix))
+            out_file_routes = os.path.join(out_path_routes, "{}.{}".format(routes_layer_name, out_suffix))
+            out_file_nodes = os.path.join(out_path_nodes, "{}.{}".format(nodes_layer_name, out_suffix))
 
             wks = workspaceFactory().get_factory(out_type_f)
-            out_node_ds,  out_node_layer = wks.createFromExistingDataSource(in_layer, out_path_nodes, nodes_layer_name, srs,
-                                                                              datasetCreationOptions, layerCreationOptions, new_fields,
-                                                                              geom_type=ogr.wkbMultiPoint, panMap=panMap, open=True)
-            out_range_ds,  out_range_layer = wks.createFromExistingDataSource(in_layer, out_path_range, range_layer_name, srs,
+            out_node_ds,  out_node_layer = wks.createFromExistingDataSource(in_layer, out_file_nodes, nodes_layer_name, srs,
                                                                             datasetCreationOptions, layerCreationOptions, new_fields,
-                                                                            geom_type=ogr.wkbPolygon, panMap=panMap, open=True)
-            out_route_ds, out_route_layer = wks.createFromExistingDataSource(in_layer, out_path_routes, routes_layer_name, srs,
+                                                                            geom_type=ogr.wkbMultiPoint, panMap=panMap, open=True)
+            out_range_ds,  out_range_layer = wks.createFromExistingDataSource(in_layer, out_file_range, range_layer_name, srs,
+                                                                              datasetCreationOptions, layerCreationOptions, new_fields,
+                                                                              geom_type=ogr.wkbPolygon, panMap=panMap, open=True)
+            out_route_ds, out_route_layer = wks.createFromExistingDataSource(in_layer, out_file_routes, routes_layer_name, srs,
                                                                              datasetCreationOptions, layerCreationOptions, new_fields,
                                                                              geom_type=ogr.wkbMultiLineString, panMap=panMap, open=True)
 
             with lock:
-                bar = mTqdm(lst, desc="worker-{}".format(ipos), position=ipos, leave=False)
-            # with mTqdm(lst, desc=current_process().name, position=ipos, leave=False) as bar:
+                bar = mTqdm(lst, desc="worker-{}-{}".format(str(cost), ipos), position=ipos, leave=False)
+
             icount = 0
             for t in lst:
                 start_node = t[0]
@@ -426,43 +527,64 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
                             distance = distances[end_node]
                             farthest_nodes.update(get_farthest_nodes(G, route, distance, cost))
 
-                            out_value = {
-                                's_ID': str(start_fid),
-                                's_POS': str("{},{}".format(start_pt.x, start_pt.y))
-                            }
-
                             # addFeature(in_fea, start_fid, line, out_line_layer, panMap, out_value)
                             # addFeature(in_fea, start_fid, lines, out_route_layer, panMap, out_value)
 
+                    out_value = {
+                        's_ID': str(start_fid),
+                        's_POS': str("{},{}".format(start_pt.x, start_pt.y))
+                    }
+
                     if len(farthest_nodes) > 0:
-                        out_nodes, out_routes = out_geometry(farthest_nodes)
-                    # print(farthest_nodes)
+                        out_nodes, out_routes, cover_area = out_geometry(farthest_nodes, concave_hull_ratio)
+                        if not out_nodes.IsEmpty():
+                            addFeature(in_fea, start_fid, out_nodes, out_node_layer, panMap, out_value)
+                        if not out_routes.IsEmpty():
+                            addFeature(in_fea, start_fid, out_routes, out_route_layer, panMap, out_value)
+                        if not cover_area.IsEmpty():
+                            addFeature(in_fea, start_fid, cover_area, out_range_layer, panMap, out_value)
 
-                    with lock:
-                        bar.update()
+                        icount += 1
+
                 except:
-                    # log.error("发生错误节点:{}".format(str(start_node)))
-                    print(traceback.format_exc())
+                    log.error("发生错误节点:{}".format(str(start_node)))
+                    # print(traceback.format_exc())
                     continue
-            with lock:
-                bar.close()
 
-        # return range_out_path, route_out_path, icount
+                out_paths_dict[cost] = {
+                    'range': out_file_range,
+                    'routes': out_file_routes,
+                    'nodes': out_file_nodes,
+                    'count': icount
+                }
+
+                with lock:
+                    bar.update()
+
+        with lock:
+            bar.close()
+
+        return out_paths_dict
     except:
         log.error(traceback.format_exc())
         return None
     finally:
         with lock:
-            if out_line_ds is not None:
-                out_line_ds.Destroy()
-            del out_line_ds
+            if out_range_ds is not None:
+                out_range_ds.Destroy()
+            del out_range_ds
 
             if out_route_ds is not None:
                 out_route_ds.Destroy()
             del out_route_ds
 
-            del out_line_layer
+            if out_node_ds is not None:
+                out_node_ds.Destroy()
+            del out_node_ds
+
+            del out_range_layer
             del out_route_layer
+            del out_node_layer
             del in_wks
             del wks
             del ds_start
@@ -470,19 +592,25 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
 
 
 # 整理需要输入的geometry
-def out_geometry(farthest_nodes):
+def out_geometry(farthest_nodes, concave_hull_ratio):
     out_nodes = ogr.Geometry(ogr.wkbMultiPoint)
     out_routes = ogr.Geometry(ogr.wkbMultiLineString)
 
+    t_routes = []
     for end_node, nodes in farthest_nodes.items():
         extend_nodes = nodes['extend_nodes']
-        routes = nodes['routes']
+        extend_routes = nodes['routes']
         for extend_node in extend_nodes:
             out_nodes.AddGeometry(CreateGeometryFromWkt(extend_node.wkt))
-        for route in routes:
-            out_routes.AddGeometryDirectly(CreateGeometryFromWkt(geometry.MultiLineString(route).wkt))
+        for extend_route in extend_routes:
+            out_routes.AddGeometryDirectly(CreateGeometryFromWkt(extend_route.wkt))
+            t_routes.append(extend_route)
 
-    return out_nodes, out_routes
+    cover_area = CreateGeometryFromWkt(concave_hull(geometry.MultiLineString(t_routes), ratio=concave_hull_ratio).wkt)
+    # cover_area = out_nodes.ConcaveHull(concave_hull_ratio, False)
+    # cover_area = out_nodes.ConvexHull()
+
+    return out_nodes, out_routes, cover_area
 
 
 def get_farthest_nodes(G, route, distance, cost):
@@ -508,7 +636,6 @@ def get_farthest_nodes(G, route, distance, cost):
         # l = CreateGeometryFromWkt(eid['geometry'].wkt)
         # lines.AddGeometry(l)
 
-
     bhas_extend = False
 
     for successor_node in G.successors(last_node):
@@ -522,12 +649,12 @@ def get_farthest_nodes(G, route, distance, cost):
 
                 interpolate_pt = l.interpolate(cost - distance)
                 geomColl = split_line_by_point(interpolate_pt, l).geoms
-                # lines_clone = lines.Clone()
-                # lines_clone.AddGeometry(CreateGeometryFromWkt(geomColl[0].wkt))
                 lines_clone = lines.copy()
                 lines_clone.append(geomColl[0])
-                out_routes.append(lines_clone)
+                out_route_geom = geometry.MultiLineString(lines_clone)
+                out_route = linemerge(out_route_geom)
 
+                out_routes.append(out_route)
                 extend_nodes.append(interpolate_pt)
                 bhas_extend = True
                 # break
