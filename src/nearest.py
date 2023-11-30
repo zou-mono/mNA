@@ -284,11 +284,12 @@ def nearest_facilities_from_layer(
             log.info("开始导出计算结果...")
             srs = layer_start.GetSpatialRef()
             # if jsonl_to_file(path_res, layer_start, srs, max_cost, out_path, out_type):
-            if combine_res_files(path_res, srs, max_cost, out_path, out_type):
-                remove_temp_folder(out_temp_path)
-                # pass
-            else:
-                log.error("导出时发生错误, 请检查临时目录:{}".format(out_temp_path))
+            if len(path_res) > 0:
+                if combine_res_files(path_res, srs, max_cost, out_path, out_type):
+                    remove_temp_folder(out_temp_path)
+                    # pass
+                else:
+                    log.error("导出时发生错误, 请检查临时目录:{}".format(out_temp_path))
 
         # export_to_file2(nearest_facilities, out_path, layer_start, "nearest", travelCosts, out_type)
         # export_to_file(G, out_path, start_points_df, target_points_df, nearest_facilities,
@@ -622,7 +623,8 @@ def calculate2(G, start_path, start_layer_name, out_path, in_layer, df, start_po
             pool.join()
 
             for res in returns:
-                path_res.append(res)
+                if len(res) > 0:
+                    path_res.append(res)
 
         return path_res
     except:
