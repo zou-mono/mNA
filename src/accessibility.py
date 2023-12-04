@@ -11,7 +11,7 @@ import shapely
 from osgeo import gdal, ogr
 from osgeo.ogr import CreateGeometryFromWkt
 from pandas import DataFrame
-from shapely import Point, geometry, concave_hull
+from shapely import Point, geometry, concave_hull, set_precision, to_wkt
 from shapely.ops import linemerge
 from tqdm import tqdm
 
@@ -215,16 +215,6 @@ def accessible_from_layer(
         log.info("计算设施位置坐标...")
         start_points_df = get_centerPoints(layer_start)
 
-
-        # # 测试用点
-        # start_points = [Point([519112.9421, 2505711.571])]
-        # dic = {
-        #     'fid': 0,
-        #     'geom': start_points[0]
-        # }
-        # start_points_df = DataFrame(dic, index=[0])
-
-
         start_points = start_points_df['geom'].to_list()
 
         # 这里需不需要对target_point进行空间检索？
@@ -234,7 +224,20 @@ def accessible_from_layer(
 
         log.info("重构后的图共有{}条边，{}个节点".format(len(G.edges), len(G)))
 
+        # if G is not None:
+        #     export_network_to_graph(out_graph_type, G, out_path, out_file="reconstructed")
+
         # max_cost = max(travelCosts)
+        # 测试用点
+        # start_points = [Point([519112.9421, 2505711.571])]
+        start_points = [Point([503892.25303395273, 2491438.911085102])]
+        dic = {
+            'fid': 0,
+            'geom': start_points[0],
+            'nodeID': 585245
+        }
+        start_points_df = DataFrame(dic, index=[0])
+
         log.info("计算起始设施可达范围的目标设施...")
 
         if out_type == DataType.csv.value:
@@ -518,10 +521,12 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
                 start_pt = start_points_dict[start_fid]
                 in_fea = in_layer.GetFeature(start_fid)
 
+                # if start_node == 585245:
+                #     print("debug")
+
                 try:
                     distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
                                                                   cutoff=cost)
-
                     # geoms = {}
                     farthest_nodes = {}
                     for end_node, route in routes.items():
@@ -549,19 +554,20 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
                         icount += 1
 
                 except:
-                    log.error("发生错误节点:{}".format(str(start_node)))
-                    # print(traceback.format_exc())
+                    log.error("发生错误节点:{}, 位置{}, error:{}".format(str(start_node),
+                                                                 "{},{}".format(start_pt.x, start_pt.y),
+                                                                 traceback.format_exc()))
                     continue
-
-                out_paths_dict[cost] = {
-                    'range': out_file_range,
-                    'routes': out_file_routes,
-                    'nodes': out_file_nodes,
-                    'count': icount
-                }
 
                 with lock:
                     bar.update()
+
+            out_paths_dict[cost] = {
+                'range': out_file_range,
+                'routes': out_file_routes,
+                'nodes': out_file_nodes,
+                'count': icount
+            }
 
         with lock:
             bar.close()
@@ -597,18 +603,29 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
 def out_geometry(farthest_nodes, concave_hull_ratio):
     out_nodes = ogr.Geometry(ogr.wkbMultiPoint)
     out_routes = ogr.Geometry(ogr.wkbMultiLineString)
+    cover_area = ogr.Geometry(ogr.wkbPolygon)
 
     t_routes = []
+    # t_nodes = []
     for end_node, nodes in farthest_nodes.items():
         extend_nodes = nodes['extend_nodes']
         extend_routes = nodes['routes']
         for extend_node in extend_nodes:
             out_nodes.AddGeometry(CreateGeometryFromWkt(extend_node.wkt))
+            # t_nodes.append(extend_node)
         for extend_route in extend_routes:
             out_routes.AddGeometryDirectly(CreateGeometryFromWkt(extend_route.wkt))
             t_routes.append(extend_route)
+            # o = extend_route.coords
+            # t_nodes.extend([Point(pt[0], pt[1]) for pt in extend_route.coords])
 
-    cover_area = CreateGeometryFromWkt(concave_hull(geometry.MultiLineString(t_routes), ratio=concave_hull_ratio).wkt)
+    if len(t_routes) >= 2:
+        # geom = concave_hull(geometry.MultiPoint(t_nodes), ratio=concave_hull_ratio)
+        geom = concave_hull(geometry.MultiLineString(t_routes), ratio=concave_hull_ratio)
+        if geom.geom_type == 'Polygon':
+            cover_area = CreateGeometryFromWkt(geom.wkt)
+
+    # cover_area = CreateGeometryFromWkt(concave_hull(geometry.MultiLineString(t_routes), ratio=concave_hull_ratio).wkt)
     # cover_area = out_nodes.ConcaveHull(concave_hull_ratio, False)
     # cover_area = out_nodes.ConvexHull()
 
@@ -634,7 +651,7 @@ def get_farthest_nodes(G, route, distance, cost):
             if v['length'] <= minlength:
                 sel_key = key
         eid = G[s][t][sel_key]
-        lines.append(eid['geometry'])
+        lines.append(set_precision(eid['geometry'], 0.1))
         # l = CreateGeometryFromWkt(eid['geometry'].wkt)
         # lines.AddGeometry(l)
 
@@ -652,11 +669,12 @@ def get_farthest_nodes(G, route, distance, cost):
                 interpolate_pt = l.interpolate(cost - distance)
                 geomColl = split_line_by_point(interpolate_pt, l).geoms
                 lines_clone = lines.copy()
-                lines_clone.append(geomColl[0])
+                lines_clone.append(set_precision(geomColl[0], 0.1))
                 out_route_geom = geometry.MultiLineString(lines_clone)
                 out_route = linemerge(out_route_geom)
 
-                out_routes.append(out_route)
+                if out_route.geom_type == 'LineString':
+                    out_routes.append(out_route)
                 extend_nodes.append(interpolate_pt)
                 bhas_extend = True
                 # break
