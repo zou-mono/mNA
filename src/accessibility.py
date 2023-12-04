@@ -81,11 +81,15 @@ lock = Lock()
 # 0-ESRI Shapefile, 1-geojson, 2-fileGDB, 3-spatialite, 4-csv
 @click.option("--out-path", "-o", type=str, required=False, default="res",
               help="输出目录名, 可选, 默认值为当前目录下的'res'.")
+@click.option("--out-nodes", type=bool, required=False, default=False,
+              help="是否输出可达最远节点. 可选, 默认不输出.")
+@click.option("--out-routes", type=bool, required=False, default=True,
+              help="是否输出可达路径. 可选, 默认不输出.")
 @click.option("--cpu-count", type=int, required=False, default=1,
               help="多进程数量, 可选, 默认为1, 即单进程. 小于0或者大于CPU最大核心数则进程数为最大核心数,否则为输入实际核心数.")
 def accessibility(network, network_layer, direction_field, forward_value, backward_value, both_value,
                   default_direction, spath, spath_layer, out_fields, cost, concave_hull_ratio,
-                  distance_tolerance, duplication_tolerance, out_type, out_graph_type, out_path, cpu_count):
+                  distance_tolerance, duplication_tolerance, out_type, out_graph_type, out_path, out_nodes, out_routes, cpu_count):
     """设施可达范围算法"""
     travelCosts = []
     for c in cost:
@@ -151,6 +155,8 @@ def accessibility(network, network_layer, direction_field, forward_value, backwa
         out_type=out_type,
         out_graph_type=out_graph_type,
         out_path=out_path,
+        out_nodes=out_nodes,
+        out_routes=out_routes,
         cpu_core=cpu_count)
 
 
@@ -173,6 +179,8 @@ def accessible_from_layer(
         out_type=0,
         out_graph_type='gpickle',
         out_path="res",
+        out_nodes=False,
+        out_routes=False,
         cpu_core=1):
     start_time = time()
 
@@ -254,7 +262,7 @@ def accessible_from_layer(
         else:
             out_temp_path = os.path.abspath(os.path.join(out_path, "temp"))
             path_res = calculate(G, start_path, start_layer_name, out_temp_path, start_points_df,
-                                 panMap, travelCosts, concave_hull_ratio, cpu_core)
+                                 panMap, travelCosts, concave_hull_ratio, out_nodes, out_routes, cpu_core)
 
             tqdm.write("\r", end="")
 
@@ -378,7 +386,8 @@ def progress_callback(complete, message, cb_data):
             bar.close()
 
 
-def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap, costs, concave_hull_ratio, cpu_core):
+def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap, costs, concave_hull_ratio,
+              out_nodes, out_routes, cpu_core):
     # line_out_path, line_layer_name, route_out_path, route_layer_name, panMap, out_type_f = \
     #     create_output_file(out_path, in_layer, layer_name, travelCosts, out_type)
     out_line_ds = None
@@ -414,7 +423,8 @@ def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap
                 lst.append(start_nodes[i])
 
                 if (i + 1) % n == 0 or i == len(start_nodes) - 1:
-                    input_param.append((shared_obj, lst, costs, out_path, panMap, start_path, start_layer_name, concave_hull_ratio, ipos))
+                    input_param.append((shared_obj, lst, costs, out_path, panMap, start_path, start_layer_name,
+                                        concave_hull_ratio, out_nodes, out_routes, ipos))
                     lst = []
                     ipos += 1
 
@@ -444,7 +454,8 @@ def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap
 
 
 #  多进程导出geojson
-def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, panMap, start_path, start_layer_name, concave_hull_ratio, ipos=0):
+def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, panMap, start_path, start_layer_name,
+                                          concave_hull_ratio, out_nodes, out_routes, ipos=0):
     out_range_ds = None
     out_range_layer = None
     out_route_ds = None
@@ -475,9 +486,9 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
             os.mkdir(out_path)
         if not os.path.exists(out_path_range):
             os.mkdir(out_path_range)
-        if not os.path.exists(out_path_routes):
+        if not os.path.exists(out_path_routes) and out_nodes:
             os.mkdir(out_path_routes)
-        if not os.path.exists(out_path_nodes):
+        if not os.path.exists(out_path_nodes) and out_routes:
             os.mkdir(out_path_nodes)
 
         datasetCreationOptions = []
@@ -506,15 +517,17 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
             out_file_nodes = os.path.join(out_path_nodes, "{}.{}".format(nodes_layer_name, out_suffix))
 
             wks = workspaceFactory().get_factory(out_type_f)
-            out_node_ds,  out_node_layer = wks.createFromExistingDataSource(in_layer, out_file_nodes, nodes_layer_name, srs,
-                                                                            datasetCreationOptions, layerCreationOptions, new_fields,
-                                                                            geom_type=ogr.wkbMultiPoint, panMap=panMap, open=True)
+            if out_nodes:
+                out_node_ds,  out_node_layer = wks.createFromExistingDataSource(in_layer, out_file_nodes, nodes_layer_name, srs,
+                                                                                datasetCreationOptions, layerCreationOptions, new_fields,
+                                                                                geom_type=ogr.wkbMultiPoint, panMap=panMap, open=True)
             out_range_ds,  out_range_layer = wks.createFromExistingDataSource(in_layer, out_file_range, range_layer_name, srs,
                                                                               datasetCreationOptions, layerCreationOptions, new_fields,
                                                                               geom_type=ogr.wkbPolygon, panMap=panMap, open=True)
-            out_route_ds, out_route_layer = wks.createFromExistingDataSource(in_layer, out_file_routes, routes_layer_name, srs,
-                                                                             datasetCreationOptions, layerCreationOptions, new_fields,
-                                                                             geom_type=ogr.wkbMultiLineString, panMap=panMap, open=True)
+            if out_routes:
+                out_route_ds, out_route_layer = wks.createFromExistingDataSource(in_layer, out_file_routes, routes_layer_name, srs,
+                                                                                 datasetCreationOptions, layerCreationOptions, new_fields,
+                                                                                 geom_type=ogr.wkbMultiLineString, panMap=panMap, open=True)
 
             with lock:
                 bar = mTqdm(lst, desc="worker-{}-{}".format(str(cost), ipos), position=ipos, leave=False)
@@ -549,9 +562,9 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
 
                     if len(farthest_nodes) > 0:
                         out_nodes, out_routes, cover_area = out_geometry(farthest_nodes, concave_hull_ratio)
-                        if not out_nodes.IsEmpty():
+                        if not out_nodes.IsEmpty() and out_nodes:
                             addFeature(in_fea, start_fid, out_nodes, out_node_layer, panMap, out_value)
-                        if not out_routes.IsEmpty():
+                        if not out_routes.IsEmpty() and out_routes:
                             addFeature(in_fea, start_fid, out_routes, out_route_layer, panMap, out_value)
                         if not cover_area.IsEmpty():
                             addFeature(in_fea, start_fid, cover_area, out_range_layer, panMap, out_value)
@@ -652,11 +665,13 @@ def get_farthest_nodes(G, route, distance, cost):
     for s, t in zip(route[:-1], route[1:]):
         eids = G[s][t]
         minlength = sys.float_info.max
+        sel_key = -1
         for key, v in eids.items():
             if v['length'] <= minlength:
                 sel_key = key
-        eid = G[s][t][sel_key]
-        lines.append(set_precision(eid['geometry'], 0.001))
+        if sel_key > -1:
+            eid = G[s][t][sel_key]
+            lines.append(set_precision(eid['geometry'], 0.001))
         # l = CreateGeometryFromWkt(eid['geometry'].wkt)
         # lines.AddGeometry(l)
 
