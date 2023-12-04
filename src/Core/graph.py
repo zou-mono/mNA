@@ -589,8 +589,8 @@ def _parse_nodes_paths(o_nodes, layer, direction_field='oneway',
     return nodes, paths
 
 
-def makeGraph(G: Graph, additionalPoints, o_max=-1, distance_tolerance=500, rtree=None):
-    duplication_tolerance = 5  # 判断两个点是否重复的容差，越大则最后的图节点越少，运行速度越快
+def makeGraph(G: Graph, additionalPoints, o_max=-1, distance_tolerance=500, duplication_tolerance=5, rtree=None):
+    # duplication_tolerance = 5  # 判断两个点是否重复的容差，越大则最后的图节点越少，运行速度越快
 
     lst = [-1] * len(additionalPoints)
     node_ids = np.array(lst)  # 将additionalPoints转换为node的label id，用于后续路径计算
@@ -645,7 +645,7 @@ def makeGraph(G: Graph, additionalPoints, o_max=-1, distance_tolerance=500, rtre
         edge_attrs = G.edges[eid]
 
         # is_endpoint, flag = _is_endpoint_of_edge(ne, edges.loc[eid]['geometry'])
-        is_endpoint, flag = _is_endpoint_of_edge(ne, edge_attrs['geometry'])
+        is_endpoint, flag = _is_endpoint_of_edge(ne, edge_attrs['geometry'], tolerance=duplication_tolerance)
 
         if not is_endpoint:
             # 加入split点，更新图
