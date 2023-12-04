@@ -230,11 +230,11 @@ def accessible_from_layer(
         # max_cost = max(travelCosts)
         # 测试用点
         # start_points = [Point([519112.9421, 2505711.571])]
-        start_points = [Point([503892.25303395273, 2491438.911085102])]
+        start_points = [Point([486769.99534558534,2520799.732169332])]
         dic = {
             'fid': 0,
             'geom': start_points[0],
-            'nodeID': 585245
+            'nodeID': 587455
         }
         start_points_df = DataFrame(dic, index=[0])
 
@@ -651,7 +651,7 @@ def get_farthest_nodes(G, route, distance, cost):
             if v['length'] <= minlength:
                 sel_key = key
         eid = G[s][t][sel_key]
-        lines.append(set_precision(eid['geometry'], 0.1))
+        lines.append(set_precision(eid['geometry'], 0.001))
         # l = CreateGeometryFromWkt(eid['geometry'].wkt)
         # lines.AddGeometry(l)
 
@@ -669,7 +669,10 @@ def get_farthest_nodes(G, route, distance, cost):
                 interpolate_pt = l.interpolate(cost - distance)
                 geomColl = split_line_by_point(interpolate_pt, l).geoms
                 lines_clone = lines.copy()
-                lines_clone.append(set_precision(geomColl[0], 0.1))
+                split_geom = set_precision(geomColl[0], 0.001)
+                if not split_geom.is_empty:
+                    lines_clone.append(split_geom)
+
                 out_route_geom = geometry.MultiLineString(lines_clone)
                 out_route = linemerge(out_route_geom)
 
