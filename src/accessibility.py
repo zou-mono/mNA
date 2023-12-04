@@ -611,7 +611,7 @@ def out_geometry(farthest_nodes, concave_hull_ratio):
     cover_area = ogr.Geometry(ogr.wkbPolygon)
 
     t_routes = []
-    extend_nodes = []
+    # extend_nodes = []
     for end_node, nodes in farthest_nodes.items():
         extend_nodes = nodes['extend_nodes']
         extend_routes = nodes['routes']
@@ -624,9 +624,9 @@ def out_geometry(farthest_nodes, concave_hull_ratio):
             # o = extend_route.coords
             # t_nodes.extend([Point(pt[0], pt[1]) for pt in extend_route.coords])
 
-    if len(extend_nodes) >= 3:
-        geom = concave_hull(geometry.MultiPoint(extend_nodes), ratio=concave_hull_ratio)
-        # geom = concave_hull(geometry.MultiLineString(t_routes), ratio=concave_hull_ratio)
+    if len(t_routes) >= 2:
+        # geom = concave_hull(geometry.MultiPoint(extend_nodes), ratio=concave_hull_ratio)
+        geom = concave_hull(geometry.MultiLineString(t_routes), ratio=concave_hull_ratio)
         if geom.geom_type == 'Polygon':
             cover_area = CreateGeometryFromWkt(geom.wkt)
 
