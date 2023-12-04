@@ -628,8 +628,8 @@ def makeGraph(G: Graph, additionalPoints, o_max=-1, distance_tolerance=500, rtre
 
         # if eid[0] == 3023 and eid[1] == 9437:
         #     print("debug")
-        if eid == (269515, 269514, 1):
-            print("debug")
+        # if eid == (269515, 269514, 1):
+        #     print("debug")
 
         breverse = True
         if eid in points_along_edge:

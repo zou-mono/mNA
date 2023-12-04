@@ -230,13 +230,13 @@ def accessible_from_layer(
         # max_cost = max(travelCosts)
         # 测试用点
         # start_points = [Point([519112.9421, 2505711.571])]
-        start_points = [Point([486769.99534558534,2520799.732169332])]
-        dic = {
-            'fid': 0,
-            'geom': start_points[0],
-            'nodeID': 587455
-        }
-        start_points_df = DataFrame(dic, index=[0])
+        # start_points = [Point([486769.99534558534,2520799.732169332])]
+        # dic = {
+        #     'fid': 0,
+        #     'geom': start_points[0],
+        #     'nodeID': 587455
+        # }
+        # start_points_df = DataFrame(dic, index=[0])
 
         log.info("计算起始设施可达范围的目标设施...")
 
@@ -606,7 +606,7 @@ def out_geometry(farthest_nodes, concave_hull_ratio):
     cover_area = ogr.Geometry(ogr.wkbPolygon)
 
     t_routes = []
-    # t_nodes = []
+    extend_nodes = []
     for end_node, nodes in farthest_nodes.items():
         extend_nodes = nodes['extend_nodes']
         extend_routes = nodes['routes']
@@ -619,9 +619,9 @@ def out_geometry(farthest_nodes, concave_hull_ratio):
             # o = extend_route.coords
             # t_nodes.extend([Point(pt[0], pt[1]) for pt in extend_route.coords])
 
-    if len(t_routes) >= 2:
-        # geom = concave_hull(geometry.MultiPoint(t_nodes), ratio=concave_hull_ratio)
-        geom = concave_hull(geometry.MultiLineString(t_routes), ratio=concave_hull_ratio)
+    if len(extend_nodes) >= 3:
+        geom = concave_hull(geometry.MultiPoint(extend_nodes), ratio=concave_hull_ratio)
+        # geom = concave_hull(geometry.MultiLineString(t_routes), ratio=concave_hull_ratio)
         if geom.geom_type == 'Polygon':
             cover_area = CreateGeometryFromWkt(geom.wkt)
 
