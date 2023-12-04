@@ -68,8 +68,8 @@ lock = Lock()
               help="可达性凹包的阈值, 取值范围0-1, 越接近1则凹包越平滑. 可选, 默认值为0.5.")
 @click.option("--distance-tolerance", type=float, required=False, default=500,
               help="定义目标设施到网络最近点的距离容差，如果超过说明该设施偏离网络过远，不参与计算. 可选, 默认值为500.")
-@click.option("--duplication-tolerance", type=float, required=False, default=5.0,
-              help="定义拓扑重复点的容差，取值越大则最后的图节点越少，运行速度越快，但同时会牺牲一定的精度. 可选, 默认值为5.")
+@click.option("--duplication-tolerance", type=float, required=False, default=10.0,
+              help="定义拓扑重复点的容差，取值越大则最后的图节点越少，运行速度越快，但同时会牺牲一定的精度. 可选, 默认值为10.")
 @click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite', 'csv'], case_sensitive=False),
               required=False, default='csv',
               help="输出文件格式, 默认值shp. 支持格式shp-ESRI Shapefile, geojson-geojson, filegdb-ESRI FileGDB, "
@@ -168,7 +168,7 @@ def accessible_from_layer(
         bothValue="",
         panMap=None,
         distance_tolerance=500,  # 从原始点到网络最近snap点的距离容差，如果超过说明该点无法到达网络，不进行计算
-        duplication_tolerance=5,
+        duplication_tolerance=10,
         defaultDirection=Direction.DirectionBoth,
         out_type=0,
         out_graph_type='gpickle',

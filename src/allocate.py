@@ -80,6 +80,8 @@ lock = Lock()
                    "允许输入多个值，例如'-c 1000 -c 1500'表示同时计算1000和1500两个范围的可达设施.")
 @click.option("--distance-tolerance", type=float, required=False, default=500,
               help="定义目标设施到网络最近点的距离容差，如果超过说明该设施偏离网络过远，不参与计算, 可选, 默认值为500.")
+@click.option("--duplication-tolerance", type=float, required=False, default=10.0,
+              help="定义拓扑重复点的容差，取值越大则最后的图节点越少，运行速度越快，但同时会牺牲一定的精度. 可选, 默认值为10.")
 @click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite', 'csv'], case_sensitive=False),
               required=False, default='shp',
               help="输出文件格式, 默认值shp. 支持格式shp-ESRI Shapefile, geojson-geojson, filegdb-ESRI FileGDB, "
@@ -95,7 +97,7 @@ lock = Lock()
               help="多进程数量, 可选, 默认为1, 即单进程. 小于0或者大于CPU最大核心数则进程数为最大核心数,否则为输入实际核心数.")
 def allocate(network, network_layer, direction_field, forward_value, backward_value, both_value,
              default_direction, spath, spath_layer, scapacity_field, tpath, tpath_layer, tcapacity_field,
-             tweight_field, cost, distance_tolerance, out_type, out_graph_type, out_path, cpu_count):
+             tweight_field, cost, distance_tolerance, duplication_tolerance, out_type, out_graph_type, out_path, cpu_count):
     """设施容量分配算法"""
     travelCosts = list()
     for c in cost:
@@ -159,6 +161,7 @@ def allocate(network, network_layer, direction_field, forward_value, backward_va
                         backwardValue=backward_value,
                         bothValue=both_value,
                         distance_tolerance=distance_tolerance,
+                        duplication_tolerance=duplication_tolerance,
                         defaultDirection=default_direction,
                         out_type=out_type,
                         out_graph_type=out_graph_type,
@@ -185,6 +188,7 @@ def allocate_from_layer(
         backwardValue="",
         bothValue="",
         distance_tolerance=500,  # 从原始点到网络最近snap点的距离容差，如果超过说明该点无法到达网络，不进行计算
+        duplication_tolerance=10,
         defaultDirection=Direction.DirectionBoth,
         out_type=0,
         out_graph_type='gpickle',
@@ -265,7 +269,8 @@ def allocate_from_layer(
         log.info("将目标设施附着到最近邻edge上，并且进行图重构...")
         all_points = start_points + target_points
 
-        G, snapped_nodeIDs = makeGraph(net, all_points, distance_tolerance=distance_tolerance)
+        G, snapped_nodeIDs = makeGraph(net, all_points, distance_tolerance=distance_tolerance,
+                                       duplication_tolerance=duplication_tolerance)
         target_points_df["nodeID"] = snapped_nodeIDs[len(start_points):]
         start_points_df["nodeID"] = snapped_nodeIDs[:len(start_points)]
 
