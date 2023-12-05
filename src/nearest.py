@@ -1208,8 +1208,18 @@ def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMa
             in_fea = in_layer.GetFeature(start_fid)
 
             try:
-                distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
-                                                              cutoff=cost)
+                geoms_dict = {}  # 存储已经计算过的start_node，从而提高速度
+
+                if start_node not in geoms_dict:
+                    distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
+                                                                  cutoff=cost)
+                    geoms_dict[start_node] = {
+                        'distances': distances,
+                        'routes': routes
+                    }
+                else:
+                    distances = geoms_dict[start_node]['distances']
+                    routes = geoms_dict[start_node]['routes']
 
                 # geoms = {}
                 if len(routes) > 1:  # 只有一个是本身，不算入搜索结果
