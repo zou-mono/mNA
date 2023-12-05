@@ -6,6 +6,7 @@ import pickle
 import traceback
 from time import strftime
 
+import shapely
 from networkx import Graph
 from osgeo import ogr, osr
 from osgeo.ogr import DataSource, GeometryTypeToName, Geometry, Layer
@@ -896,14 +897,35 @@ def _split_edges(G, points_along_edge):
     return G
 
 
+#  在已有图上增加一个虚拟节点，并不破坏原有的图
+def split_edge_by_virtual_node(G, eid, split_point, duplication_tolerance):
+    line = G.edges[eid]['geometry']
+    edge_attrs = G.edges[eid]
+
+    is_endpoint, flag = _is_endpoint_of_edge(split_point, edge_attrs['geometry'], tolerance=duplication_tolerance)
+
+    if is_endpoint:
+        if flag == 's':
+            ret = line
+            len = line.length
+        else:
+            ret = None
+            len = 0
+    else:
+        geomColl = split_line_by_point(split_point, line).geoms
+        ret = geomColl[1]
+        len = ret.length
+
+    return ret, len  # 从分割点到边末节点的geometry
+
 def _split_edges_by_point(G, eid, o_max, split_point):
     line = G.edges[eid]['geometry']
     edge_attrs = G.edges[eid]
 
     geomColl = split_line_by_point(split_point, line).geoms
 
-    if len(geomColl) == 1:
-        print("debug")
+    # if len(geomColl) == 1:
+    #     print("debug")
 
     node_id = o_max + 1
     G.add_node(node_id, **{

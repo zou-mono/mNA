@@ -11,8 +11,8 @@ import shapely
 from osgeo import gdal, ogr
 from osgeo.ogr import CreateGeometryFromWkt
 from pandas import DataFrame
-from shapely import Point, geometry, concave_hull, set_precision, to_wkt
-from shapely.ops import linemerge
+from shapely import Point, geometry, concave_hull, set_precision, to_wkt, STRtree
+from shapely.ops import linemerge, nearest_points
 from tqdm import tqdm
 
 from Core.DataFactory import get_suffix, workspaceFactory, addFeature, creation_options
@@ -20,7 +20,7 @@ from Core.check import init_check
 from Core.common import get_centerPoints
 from Core.core import DataType, QueueManager, DataType_suffix, check_layer_name, remove_temp_folder
 from Core.graph import Direction, import_graph_to_network, create_graph_from_file, export_network_to_graph, makeGraph, \
-    GraphTransfer
+    GraphTransfer, split_edge_by_virtual_node
 from Core.log4p import Log, mTqdm
 from Core.ogrmerge import ogrmerge
 from Core.utils_graph import split_line_by_point
@@ -232,15 +232,15 @@ def accessible_from_layer(
         log.info("计算设施位置坐标...")
         start_points_df = get_centerPoints(layer_start)
 
-        start_points = start_points_df['geom'].to_list()
+        # start_points = start_points_df['geom'].to_list()
 
         # 这里需不需要对target_point进行空间检索？
-        log.info("将目标设施附着到最近邻edge上，并且进行图重构...")
-        G, snapped_nodeIDs = makeGraph(net, start_points, distance_tolerance=distance_tolerance,
-                                       duplication_tolerance=duplication_tolerance)
-        start_points_df["nodeID"] = snapped_nodeIDs
-
-        log.info("重构后的图共有{}条边，{}个节点".format(len(G.edges), len(G)))
+        # log.info("将目标设施附着到最近邻edge上，并且进行图重构...")
+        # G, snapped_nodeIDs = makeGraph(net, start_points, distance_tolerance=distance_tolerance,
+        #                                duplication_tolerance=duplication_tolerance)
+        # start_points_df["nodeID"] = snapped_nodeIDs
+        #
+        # log.info("重构后的图共有{}条边，{}个节点".format(len(G.edges), len(G)))
 
         # if G is not None:
         #     export_network_to_graph(out_graph_type, G, out_path, out_file="reconstructed")
@@ -266,8 +266,11 @@ def accessible_from_layer(
             #                travelCosts, layer_start, "nearest", out_type, cpu_core)
         else:
             out_temp_path = os.path.abspath(os.path.join(out_path, "temp"))
-            path_res = calculate(G, start_path, start_layer_name, out_temp_path, start_points_df,
-                                 panMap, travelCosts, concave_hull_ratio, bout_nodes, bout_routes, bwithin, cpu_core)
+            # path_res = calculate(G, start_path, start_layer_name, out_temp_path, start_points_df,
+            #                      panMap, travelCosts, concave_hull_ratio, bout_nodes, bout_routes, bwithin, cpu_core)
+            path_res = calculate(net, start_path, start_layer_name, out_temp_path, start_points_df,
+                                 panMap, travelCosts, distance_tolerance, duplication_tolerance, concave_hull_ratio,
+                                 bout_nodes, bout_routes, bwithin, cpu_core)
 
             tqdm.write("\r", end="")
 
@@ -334,7 +337,7 @@ def combine_res_files(path_res, costs, bout_nodes, bout_routes, out_path, out_ty
         pool = Pool(processes=process_num, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
 
         input_param = []
-        ipos = 0
+        ipos = -1
         for cost in costs:
             range_paths = range_paths_dict[cost]
             route_paths = route_paths_dict[cost]
@@ -349,6 +352,7 @@ def combine_res_files(path_res, costs, bout_nodes, bout_routes, out_path, out_ty
             routes_dst_name = os.path.join(out_path, "{}.{}".format(out_routes_layer_name, out_suffix))
             nodes_dst_name = os.path.join(out_path, "{}.{}".format(out_nodes_layer_name, out_suffix))
 
+            ipos += 1
             input_param.append((range_paths, range_dst_name, out_format, True, out_range_layer_name, ogr.wkbPolygon,
                                 datasetCreationOptions, layerCreationOptions, total_num, ipos))
 
@@ -393,8 +397,8 @@ def progress_callback(complete, message, cb_data):
             bar.close()
 
 
-def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap, costs, concave_hull_ratio,
-              out_nodes, out_routes, bwithin, cpu_core):
+def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap, costs, distance_tolerance,
+              duplication_tolerance, concave_hull_ratio, out_nodes, out_routes, bwithin, cpu_core):
     # line_out_path, line_layer_name, route_out_path, route_layer_name, panMap, out_type_f = \
     #     create_output_file(out_path, in_layer, layer_name, travelCosts, out_type)
     out_line_ds = None
@@ -414,12 +418,14 @@ def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap
             lst = []
 
             start_nodes = []
-            for fid, start_node in zip(start_points_df['fid'], start_points_df['nodeID']):
-                if start_node == -1:
-                    continue
-                start_nodes.append((start_node, fid))
+            # for fid, start_node in zip(start_points_df['fid'], start_points_df['nodeID']):
+            #     if start_node == -1:
+            #         continue
+            #     start_nodes.append((start_node, fid))
+            for row in start_points_df.itertuples():
+                start_nodes.append(row[0])
 
-            n = ceil(len(start_nodes) / cpu_core)  # 数据按照CPU数量分块
+            n = ceil(len(start_points_df) / cpu_core)  # 数据按照CPU数量分块
 
             tqdm.set_lock(RLock())
             pool = Pool(processes=cpu_core, initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
@@ -429,9 +435,9 @@ def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap
             for i in range(len(start_nodes)):
                 lst.append(start_nodes[i])
 
-                if (i + 1) % n == 0 or i == len(start_nodes) - 1:
+                if (i + 1) % n == 0 or i == len(start_points_df) - 1:
                     input_param.append((shared_obj, lst, costs, out_path, panMap, start_path, start_layer_name,
-                                        concave_hull_ratio, out_nodes, out_routes, bwithin, ipos))
+                                        distance_tolerance, duplication_tolerance, concave_hull_ratio, out_nodes, out_routes, bwithin, ipos))
                     lst = []
                     ipos += 1
 
@@ -462,7 +468,7 @@ def calculate(G, start_path, start_layer_name, out_path, start_points_df, panMap
 
 #  多进程导出geojson
 def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, panMap, start_path, start_layer_name,
-                                          concave_hull_ratio, bout_nodes, bout_routes, bwithin, ipos=0):
+                                          distance_tolerance, duplication_tolerance, concave_hull_ratio, bout_nodes, bout_routes, bwithin, ipos=0):
     out_range_ds = None
     out_range_layer = None
     out_route_ds = None
@@ -475,9 +481,13 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
     in_layer = None
 
     try:
-        G, df = shared_custom.task()
+        G, start_points_df = shared_custom.task()
 
-        start_points_dict = df.to_dict()['geom']
+        start_points_dict = start_points_df.to_dict()['geom']
+
+        edge_geoms = list(nx.get_edge_attributes(G, "geometry").values())
+        rtree = STRtree(edge_geoms)
+        edge_ids = list(G.edges)
 
         out_type_f = DataType.geojson
 
@@ -541,10 +551,9 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
 
             icount = 0
             geoms_dict = {}  # 存储已经计算过的start_node，从而提高速度
-            for t in lst:
-                start_node = t[0]
-                start_fid = t[1]
-                start_pt = start_points_dict[start_fid]
+            for iStart_pt, start_fid in enumerate(lst):
+                # start_pt = start_points_dict[start_fid]
+                start_pt = start_points_df.iloc[iStart_pt]['geom']
                 in_fea = in_layer.GetFeature(start_fid)
 
                 out_value = {
@@ -558,41 +567,54 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
                     out_routes = ogr.Geometry(ogr.wkbMultiLineString)
                     cover_area = ogr.Geometry(ogr.wkbPolygon)
 
-                    if start_node not in geoms_dict:
-                        distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
-                                                                      cutoff=cost)
-                        for end_node, route in routes.items():
-                            if len(route) > 1:  # 只有一个是本身，不算入搜索结果
-                                distance = distances[end_node]
-                                farthest_nodes.update(get_farthest_nodes(G, route, distance, cost, bwithin))
+                    pos = rtree.query_nearest([start_pt], all_matches=False, return_distance=False,
+                                              max_distance=distance_tolerance)
 
-                        if len(farthest_nodes) > 0:
-                            out_nodes, out_routes, cover_area = out_geometry(farthest_nodes, concave_hull_ratio)
-                            geoms_dict[start_node] = {
-                                'out_nodes': out_nodes,
-                                'out_routes': out_routes,
-                                'cover_area': cover_area
-                            }
+                    if pos.shape[1] > 0:  # 存在找不到最近邻edge的情况
+                        line = edge_geoms[pos[1][0]]
+                        ne = nearest_points(line, start_pt)[0]
+                        eid = edge_ids[pos[1][0]]
+
+                        start_node = eid[1]  # 起始id为最近边的末节点
+
+                        if start_node not in geoms_dict:
+                            start_geom, start_len = split_edge_by_virtual_node(G, eid, ne, duplication_tolerance)
+
+                            cutoff = cost - start_len  # 最近边已经用去了一部分长度，因此要截掉这部分
+                            distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
+                                                                          cutoff=cutoff)
+                            for end_node, route in routes.items():
+                                if len(route) > 1:  # 只有一个是本身，不算入搜索结果
+                                    distance = distances[end_node]
+                                    farthest_nodes.update(get_farthest_nodes(G, start_geom, route, distance, cutoff, bwithin))
+
+                            if len(farthest_nodes) > 0:
+                                out_nodes, out_routes, cover_area = out_geometry(farthest_nodes, concave_hull_ratio)
+                                geoms_dict[start_node] = {
+                                    'out_nodes': out_nodes,
+                                    'out_routes': out_routes,
+                                    'cover_area': cover_area
+                                }
+                            else:
+                                out_nodes = ogr.Geometry(ogr.wkbMultiPoint)
+                                out_routes = ogr.Geometry(ogr.wkbMultiLineString)
+                                cover_area = ogr.Geometry(ogr.wkbPolygon)
+                                geoms_dict[start_node] = {
+                                    'out_nodes': out_nodes,
+                                    'out_routes': out_routes,
+                                    'cover_area': cover_area
+                                }
                         else:
-                            out_nodes = ogr.Geometry(ogr.wkbMultiPoint)
-                            out_routes = ogr.Geometry(ogr.wkbMultiLineString)
-                            cover_area = ogr.Geometry(ogr.wkbPolygon)
-                            geoms_dict[start_node] = {
-                                'out_nodes': out_nodes,
-                                'out_routes': out_routes,
-                                'cover_area': cover_area
-                            }
-                    else:
-                        out_nodes = geoms_dict[start_node]['out_nodes']
-                        out_routes = geoms_dict[start_node]['out_routes']
-                        cover_area = geoms_dict[start_node]['cover_area']
+                            out_nodes = geoms_dict[start_node]['out_nodes']
+                            out_routes = geoms_dict[start_node]['out_routes']
+                            cover_area = geoms_dict[start_node]['cover_area']
 
-                    if not out_nodes.IsEmpty() and bout_nodes:
-                        addFeature(in_fea, start_fid, out_nodes, out_node_layer, panMap, out_value)
-                    if not out_routes.IsEmpty() and bout_routes:
-                        addFeature(in_fea, start_fid, out_routes, out_route_layer, panMap, out_value)
-                    if not cover_area.IsEmpty():
-                        addFeature(in_fea, start_fid, cover_area, out_range_layer, panMap, out_value)
+                        if not out_nodes.IsEmpty() and bout_nodes:
+                            addFeature(in_fea, start_fid, out_nodes, out_node_layer, panMap, out_value)
+                        if not out_routes.IsEmpty() and bout_routes:
+                            addFeature(in_fea, start_fid, out_routes, out_route_layer, panMap, out_value)
+                        if not cover_area.IsEmpty():
+                            addFeature(in_fea, start_fid, cover_area, out_range_layer, panMap, out_value)
 
                     icount += 1
 
@@ -675,7 +697,7 @@ def out_geometry(farthest_nodes, concave_hull_ratio):
     return out_nodes, out_routes, cover_area
 
 
-def get_farthest_nodes(G, route, distance, cost, bwithin):
+def get_farthest_nodes(G, start_geom, route, distance, cost, bwithin):
     last_node = route[-1]
     farthest_nodes = {}  # 记录最远的节点编号,Key是最远点的nodeid, value是扩展点信息以及routes
     extend_nodes = []  # 存储扩展点的位置
@@ -684,7 +706,10 @@ def get_farthest_nodes(G, route, distance, cost, bwithin):
     # lines = ogr.Geometry(ogr.wkbMultiLineString)
     # start_pt = ogr.Geometry(ogr.wkbPoint)
     # start_pt.AddPoint_2D(G.nodes[route[0]]['x'], G.nodes[route[0]]['y'])
-    lines = []
+    if start_geom is None:
+        lines = []
+    else:
+        lines = [start_geom]
 
     # 原始route的geometry
     for s, t in zip(route[:-1], route[1:]):
