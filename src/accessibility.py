@@ -18,7 +18,7 @@ from tqdm import tqdm
 from Core.DataFactory import get_suffix, workspaceFactory, addFeature, creation_options
 from Core.check import init_check
 from Core.common import get_centerPoints
-from Core.core import DataType, QueueManager, DataType_suffix, check_layer_name
+from Core.core import DataType, QueueManager, DataType_suffix, check_layer_name, remove_temp_folder
 from Core.graph import Direction, import_graph_to_network, create_graph_from_file, export_network_to_graph, makeGraph, \
     GraphTransfer
 from Core.log4p import Log, mTqdm
@@ -73,10 +73,10 @@ lock = Lock()
 @click.option("--bwithin", type=bool, required=False, default=False,
               help="是否计算最大可达距离所在边上的精确within点, 如果是则会极大降低计算速度, "
                    "如果否则直接取最远边的末节点,但会牺牲精度. 可选, 默认值为否.")
-@click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite', 'csv'], case_sensitive=False),
-              required=False, default='csv',
+@click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite'], case_sensitive=False),
+              required=False, default='shp',
               help="输出文件格式, 默认值shp. 支持格式shp-ESRI Shapefile, geojson-geojson, filegdb-ESRI FileGDB, "
-                   "sqlite-spatialite, csv-csv.")
+                   "sqlite-spatialite.")
 @click.option("--out-graph-type", type=click.Choice(['gpickle', 'graphml', 'gml', 'gexf'], case_sensitive=False),
               required=False, default='gpickle',
               help="如果原始网络数据是空间数据(shp, geojson, gdb等), 则需要设置存储的图文件格式, "
@@ -248,13 +248,13 @@ def accessible_from_layer(
         # max_cost = max(travelCosts)
         # 测试用点
         # start_points = [Point([519112.9421, 2505711.571])]
-        start_points = [Point([486769.99534558534,2520799.732169332])]
-        dic = {
-            'fid': 0,
-            'geom': start_points[0],
-            'nodeID': 587455
-        }
-        start_points_df = DataFrame(dic, index=[0])
+        # start_points = [Point([486769.99534558534,2520799.732169332])]
+        # dic = {
+        #     'fid': 0,
+        #     'geom': start_points[0],
+        #     'nodeID': 587455
+        # }
+        # start_points_df = DataFrame(dic, index=[0])
 
         log.info("计算起始设施可达范围的目标设施...")
 
@@ -276,8 +276,7 @@ def accessible_from_layer(
             # if jsonl_to_file(path_res, layer_start, srs, max_cost, out_path, out_type):
             if len(path_res) > 0:
                 if combine_res_files(path_res, travelCosts, bout_nodes, bout_routes, out_path, out_type):
-                    # remove_temp_folder(out_temp_path)
-                    pass
+                    remove_temp_folder(out_temp_path)
                 else:
                     log.error("导出时发生错误, 请检查临时目录:{}".format(out_temp_path))
 
@@ -695,43 +694,48 @@ def get_farthest_nodes(G, route, distance, cost, bwithin):
         for key, v in eids.items():
             if v['length'] <= minlength:
                 sel_key = key
+                minlength = v['length']
         if sel_key > -1:
             eid = G[s][t][sel_key]
-            lines.append(set_precision(eid['geometry'], 0.001))
-        # l = CreateGeometryFromWkt(eid['geometry'].wkt)
-        # lines.AddGeometry(l)
+            lines.append(eid['geometry'])
+            # lines.append(set_precision(eid['geometry'], 0.001))
 
     bhas_extend = False
 
-    for successor_node in G.successors(last_node):
+    # for successor_node in G.successors(last_node):
+    #     t_eids = G[last_node][successor_node]
+
+    for out_edge in G.out_edges(last_node):
+        successor_node = out_edge[1]
         t_eids = G[last_node][successor_node]
 
         for key, v in t_eids.items():
             t_eid = G[last_node][successor_node][key]
+
             if v['length'] + distance > cost:  # 到达最远边，需要插入within点
                 # bhas_extend = True
                 l = t_eid['geometry']
 
-                interpolate_pt = l.interpolate(cost - distance)
-
-                lines_clone = lines.copy()
                 if bwithin:
+                    lines_clone = [set_precision(line, 0.001) for line in lines]
+                    interpolate_pt = l.interpolate(cost - distance)
                     geomColl = split_line_by_point(interpolate_pt, l).geoms
                     split_geom = set_precision(geomColl[0], 0.001)
                     if not split_geom.is_empty:
                         lines_clone.append(split_geom)
+                    extend_nodes.append(interpolate_pt)
                 else:
-                    lines_clone.append(l.geoms)
+                    lines_clone = lines.copy()
+                    lines_clone.append(l)
+                    extend_nodes.append(Point(l.coords[-1][0], l.coords[-1][1]))
 
                 out_route_geom = geometry.MultiLineString(lines_clone)
                 out_route = linemerge(out_route_geom)
 
                 if out_route.geom_type == 'LineString':
                     out_routes.append(out_route)
-                extend_nodes.append(interpolate_pt)
 
                 bhas_extend = True
-                # break
 
     if bhas_extend:
         farthest_nodes[last_node] = {

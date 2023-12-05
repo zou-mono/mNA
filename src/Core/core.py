@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import traceback
 from enum import Enum
 from multiprocessing.managers import BaseManager
@@ -47,13 +48,22 @@ DataType_dict = {
 }
 
 
-def remove_temp_db(db_path):
+def remove_temp_folder(in_path):
     try:
-        if os.path.exists(db_path):
-            os.remove(db_path)
-            log.debug("删除临时文件数据库文件{}成功！".format(db_path))
+        if os.path.exists(in_path):
+            # os.remove(in_path)
+            shutil.rmtree(in_path, True)
     except:
-        log.warning("删除临时文件数据库文件{}出错，可能是数据库文件被占用，请手动删除!".format(db_path))
+        log.warning("临时文件夹{}被占用, 无法自动删除, 请手动删除!".format(in_path))
+
+
+# def remove_temp_db(db_path):
+#     try:
+#         if os.path.exists(db_path):
+#             os.remove(db_path)
+#             log.debug("删除临时文件数据库文件{}成功！".format(db_path))
+#     except:
+#         log.warning("删除临时文件数据库文件{}出错，可能是数据库文件被占用，请手动删除!".format(db_path))
 
 
 def check_layer_name(name):

@@ -22,7 +22,7 @@ from Core import filegdbapi
 from Core.DataFactory import workspaceFactory, get_suffix, addFeature, creation_options
 from Core.check import init_check
 from Core.common import resource_path, set_main_path, get_centerPoints
-from Core.core import DataType, QueueManager, check_layer_name, DataType_suffix, DataType_dict
+from Core.core import DataType, QueueManager, check_layer_name, DataType_suffix, DataType_dict, remove_temp_folder
 from Core.log4p import Log, mTqdm
 
 from Core.graph import makeGraph, Direction, GraphTransfer, import_graph_to_network, create_graph_from_file, \
@@ -333,15 +333,6 @@ def nearest_facilities_from_layer(
 #         # sys.stdout.write('')
 #         with lock:
 #             stdout_clear(cb_data)
-
-
-def remove_temp_folder(in_path):
-    try:
-        if os.path.exists(in_path):
-            # os.remove(in_path)
-            shutil.rmtree(in_path, True)
-    except:
-        log.warning("临时文件夹{}被占用, 无法自动删除, 请手动删除!".format(in_path))
 
 
 def jsonl_to_file(path_res, in_layer, srs, cost, out_path, out_type):
@@ -1057,6 +1048,7 @@ def output_geometry(G, start_pt, target_pt, route):
         for key, v in eids.items():
             if v['length'] <= minlength:
                 sel_key = key
+                minlength = v['length']
         eid = G[s][t][sel_key]
         # l = CreateGeometryFromWkt(eid['geometry'].wkt)
         # lines.AddGeometryDirectly(l)
