@@ -918,6 +918,23 @@ def split_edge_by_virtual_node(G, eid, split_point, duplication_tolerance):
 
     return ret, len  # 从分割点到边末节点的geometry
 
+
+def query_out_node_by_point(rtree, start_pt, edge_geoms, edge_ids, distance_tolerance):
+    pos = rtree.query_nearest([start_pt], all_matches=False, return_distance=False,
+                              max_distance=distance_tolerance)
+    if pos.shape[1] > 0:  # 存在找不到最近邻edge的情况
+        line = edge_geoms[pos[1][0]]
+        ne = nearest_points(line, start_pt)[0]
+        eid = edge_ids[pos[1][0]]
+
+        # start_node = eid[1]  # 起始id为最近边的末节点
+    else:
+        ne = Point()
+        eid = (-1, -1, -1)
+
+    return eid, ne
+
+
 def _split_edges_by_point(G, eid, o_max, split_point):
     line = G.edges[eid]['geometry']
     edge_attrs = G.edges[eid]

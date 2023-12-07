@@ -483,7 +483,7 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
     try:
         G, start_points_df = shared_custom.task()
 
-        start_points_dict = start_points_df.to_dict()['geom']
+        # start_points_dict = start_points_df.to_dict()['geom']
 
         edge_geoms = list(nx.get_edge_attributes(G, "geometry").values())
         rtree = STRtree(edge_geoms)
