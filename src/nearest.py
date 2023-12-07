@@ -294,7 +294,7 @@ def nearest_facilities_from_layer(
         log.info("计算起始设施可达范围的目标设施...")
 
         if out_type == DataType.csv.value:
-            nearest_facilities = calculate_single(G, start_points_df, df, max_cost, distance_tolerance,
+            nearest_facilities = calculate_csv(G, start_points_df, df, max_cost,
                                             duplication_tolerance, cpu_core)
             log.info("开始导出计算结果...")
             export_to_file(G, out_path, start_points_df, target_points_df, nearest_facilities,
@@ -536,10 +536,9 @@ def progress_callback(complete, message, cb_data):
             bar.close()
 
 
-def calculate_single(G, start_points_df, df, max_cost, distance_tolerance, duplication_tolerance, cpu_core):
+# csv结果的计算过程，不导出geometry
+def calculate_csv(G, start_points_df, df, max_cost, duplication_tolerance, cpu_core):
     nearest_facilities = {}  # 存储起始设施可达的目标设施
-
-    geoms_dict = {}  # 存储已经计算过的start_node，从而提高速度
 
     target_nodes = set(df['nodeID'].to_list())
 
@@ -550,19 +549,17 @@ def calculate_single(G, start_points_df, df, max_cost, distance_tolerance, dupli
                                                        start_points_df['ne_edge'], start_points_df['ne_pt']),
                                                    total=start_points_df.shape[0]):
             start_node = ne_edge[1]
+            if fid == 37:
+                print("37")
 
             if start_node > 0:
-                start_geom, start_len = split_edge_by_virtual_node(G, ne_edge, ne_pt, duplication_tolerance)
+                _, start_len = split_edge_by_virtual_node(G, ne_edge, ne_pt, duplication_tolerance)
 
-                if start_node not in geoms_dict:
-                    nf = nearest_facilities_from_point(G, start_node, df,
-                                                       travelCost=max_cost-start_len)
-                    geoms_dict[start_node] = (nf, start_geom, start_len)
-                else:
-                    nf = geoms_dict[start_node]
+                nf = nearest_facilities_from_point(G, start_node, df,
+                                                   travelCost=max_cost, start_len=start_len)
 
                 if len(nf) > 0:
-                    nearest_facilities[fid] = (nf, start_geom, start_len)
+                    nearest_facilities[fid] = nf  # 不导出geometry, 不需要记录start_geom
     else:
         QueueManager.register('graphTransfer', GraphTransfer)
 
@@ -571,15 +568,13 @@ def calculate_single(G, start_points_df, df, max_cost, distance_tolerance, dupli
             lst = []
 
             start_nodes = []
-            for fid, start_pt in zip(start_points_df['fid'], start_points_df['geom']):
-                # for fid, start_node in zip(start_points_df['fid'], start_points_df['nodeID']):
-                pos = rtree.query_nearest([start_pt], all_matches=False, return_distance=False,
-                                          max_distance=distance_tolerance)
+            for fid, start_pt, ne_edge, ne_pt in zip(start_points_df['fid'], start_points_df['geom'],
+                                                           start_points_df['ne_edge'], start_points_df['ne_pt']):
+                start_node = ne_edge[1]
 
-                if pos.shape[1] > 0:  # 存在找不到最近邻edge的情况
-                    eid = edge_ids[pos[1][0]]
-                    start_node = eid[1]  # 起始id为最近边的末节点
-                    start_nodes.append((start_node, fid))
+                if start_node > 0:
+                    _, start_len = split_edge_by_virtual_node(G, ne_edge, ne_pt, duplication_tolerance)
+                    start_nodes.append((start_node, fid, start_len))
 
             n = ceil(len(start_nodes) / cpu_core)  # 数据按照CPU数量分块
 
@@ -593,8 +588,6 @@ def calculate_single(G, start_points_df, df, max_cost, distance_tolerance, dupli
 
                 if (i + 1) % n == 0 or i == len(start_nodes) - 1:
                     input_param.append((shared_obj, lst, max_cost, True, True, ipos))
-                    # processes.append(Process(target=nearest_facilities_from_point_worker,
-                    #                          args=(None, shared_obj, lst, travelCost, False, True)))
                     lst = []
                     ipos += 1
 
@@ -1113,8 +1106,8 @@ def export_csv(out_path, layer_name, res, costs):
     csvfile_line = None
     try:
         for idx, cost in enumerate(costs):
-            out_nearest_file = os.path.join(out_path, "nearest_{}_{}.csv".format(layer_name, cost))
-            out_line_file = os.path.join(out_path, "line_{}_{}.csv".format(layer_name, cost))
+            out_nearest_file = os.path.join(out_path, "{}_distance_{}.csv".format(layer_name, cost))
+            out_line_file = os.path.join(out_path, "{}_targets_{}.csv".format(layer_name, cost))
 
             csvfile_nearest = open(out_nearest_file, 'w', newline='')
             csvfile_line = open(out_line_file, 'w', newline='')
@@ -1149,6 +1142,7 @@ def export_csv(out_path, layer_name, res, costs):
 
 def nearest_facilities_from_point(G, start_node, target_df,
                                   travelCost,
+                                  start_len=0,
                                   bRoutes=True,
                                   bDistances=True):
     match_routes = {}
@@ -1157,11 +1151,14 @@ def nearest_facilities_from_point(G, start_node, target_df,
     # return current_process().name + '-' + str(start_node)
 
     distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
-                                                  cutoff=travelCost)
+                                                  cutoff=travelCost-start_len)
 
-    if (len(routes) > 1 and travelCost > 0) or (len(routes) == 1 and travelCost <= 0):
+    if (len(routes) > 1 and travelCost-start_len > 0) or (len(routes) == 1 and travelCost-start_len <= 0):
         # 寻找匹配到的目标设施对应的node以及fid
         match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
+
+        if start_len > 0:
+            distances = {key: value + start_len for key, value in distances.items()}
 
         # match_nodes = match_df['nodeID']
         for match_node, target_fid in zip(match_df["nodeID"], match_df["fid"]):
@@ -1484,19 +1481,27 @@ def nearest_facilities_from_point_worker(shared_custom, lst, travelCost, bRoutes
     for t in lst:
         start_node = t[0]
         fid = t[1]
+        if len(t) > 2:
+            start_len = t[2]
+        else:
+            start_len = 0
+
+        if fid == 37:
+            print("37")
         # try:
+        # travelCost_ = travelCost-start_len
         distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
-                                                      cutoff=travelCost)
+                                                      cutoff=travelCost-start_len)
 
         match_routes = {}
         match_distances = {}
 
-        if len(routes) > 1:  # 只有一个是本身，不算入搜索结果
+        if start_len > 0:
+            distances = {key: value + start_len for key, value in distances.items()}
+
+        if (len(routes) > 1 and travelCost-start_len > 0) or (len(routes) == 1 and travelCost-start_len <= 0):
             match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
 
-            # for row in match_df.itertuples():
-            #     match_node = row.nodeID
-            #     target_fid = row.fid
             if len(match_df) > 0:
                 for match_node, target_fid in zip(match_df["nodeID"], match_df["fid"]):
                     if bRoutes:
@@ -1515,12 +1520,10 @@ def nearest_facilities_from_point_worker(shared_custom, lst, travelCost, bRoutes
                 }
 
         if bRoutes and not bDistances:
-            if len(match_routes) > 0:
-                nearest_facilities[fid] = match_routes
+            nearest_facilities[fid] = match_routes
 
         if bDistances and not bRoutes:
-            if len(match_distances) > 0:
-                nearest_facilities[fid] = match_distances
+            nearest_facilities[fid] = match_distances
 
         # bar.update()
         with lock:

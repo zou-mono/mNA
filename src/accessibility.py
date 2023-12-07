@@ -550,7 +550,7 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
                 bar = mTqdm(lst, desc="worker-{}-{}".format(str(cost), ipos), position=ipos, leave=False)
 
             icount = 0
-            geoms_dict = {}  # 存储已经计算过的start_node，从而提高速度
+            # geoms_dict = {}  # 存储已经计算过的start_node，从而提高速度
             for iStart_pt, start_fid in enumerate(lst):
                 # start_pt = start_points_dict[start_fid]
                 start_pt = start_points_df.iloc[iStart_pt]['geom']
@@ -577,37 +577,37 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
 
                         start_node = eid[1]  # 起始id为最近边的末节点
 
-                        if start_node not in geoms_dict:
-                            start_geom, start_len = split_edge_by_virtual_node(G, eid, ne, duplication_tolerance)
+                        # if start_node not in geoms_dict:
+                        start_geom, start_len = split_edge_by_virtual_node(G, eid, ne, duplication_tolerance)
 
-                            cutoff = cost - start_len  # 最近边已经用去了一部分长度，因此要截掉这部分
-                            distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
-                                                                          cutoff=cutoff)
-                            for end_node, route in routes.items():
-                                if len(route) > 1:  # 只有一个是本身，不算入搜索结果
-                                    distance = distances[end_node]
-                                    farthest_nodes.update(get_farthest_nodes(G, start_geom, route, distance, cutoff, bwithin))
+                        cutoff = cost - start_len  # 最近边已经用去了一部分长度，因此要截掉这部分
+                        distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
+                                                                      cutoff=cutoff)
+                        for end_node, route in routes.items():
+                            if len(route) > 1:  # 只有一个是本身，不算入搜索结果
+                                distance = distances[end_node]
+                                farthest_nodes.update(get_farthest_nodes(G, start_geom, route, distance, cutoff, bwithin))
 
-                            if len(farthest_nodes) > 0:
-                                out_nodes, out_routes, cover_area = out_geometry(farthest_nodes, concave_hull_ratio)
-                                geoms_dict[start_node] = {
-                                    'out_nodes': out_nodes,
-                                    'out_routes': out_routes,
-                                    'cover_area': cover_area
-                                }
-                            else:
-                                out_nodes = ogr.Geometry(ogr.wkbMultiPoint)
-                                out_routes = ogr.Geometry(ogr.wkbMultiLineString)
-                                cover_area = ogr.Geometry(ogr.wkbPolygon)
-                                geoms_dict[start_node] = {
-                                    'out_nodes': out_nodes,
-                                    'out_routes': out_routes,
-                                    'cover_area': cover_area
-                                }
+                        if len(farthest_nodes) > 0:
+                            out_nodes, out_routes, cover_area = out_geometry(farthest_nodes, concave_hull_ratio)
+                            # geoms_dict[start_node] = {
+                            #     'out_nodes': out_nodes,
+                            #     'out_routes': out_routes,
+                            #     'cover_area': cover_area
+                            # }
                         else:
-                            out_nodes = geoms_dict[start_node]['out_nodes']
-                            out_routes = geoms_dict[start_node]['out_routes']
-                            cover_area = geoms_dict[start_node]['cover_area']
+                            out_nodes = ogr.Geometry(ogr.wkbMultiPoint)
+                            out_routes = ogr.Geometry(ogr.wkbMultiLineString)
+                            cover_area = ogr.Geometry(ogr.wkbPolygon)
+                            # geoms_dict[start_node] = {
+                            #     'out_nodes': out_nodes,
+                            #     'out_routes': out_routes,
+                            #     'cover_area': cover_area
+                            # }
+                        # else:
+                        #     out_nodes = geoms_dict[start_node]['out_nodes']
+                        #     out_routes = geoms_dict[start_node]['out_routes']
+                        #     cover_area = geoms_dict[start_node]['cover_area']
 
                         if not out_nodes.IsEmpty() and bout_nodes:
                             addFeature(in_fea, start_fid, out_nodes, out_node_layer, panMap, out_value)
