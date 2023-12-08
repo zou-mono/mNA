@@ -26,7 +26,8 @@ from Core.core import DataType, QueueManager, check_layer_name, DataType_suffix,
 from Core.log4p import Log, mTqdm
 
 from Core.graph import makeGraph, Direction, GraphTransfer, import_graph_to_network, create_graph_from_file, \
-    export_network_to_graph, split_edge_by_virtual_node, query_out_node_by_point
+    export_network_to_graph, split_edge_by_virtual_node, query_nn_by_point, \
+    fix_snapped_points_along_edge
 from Core.ogrmerge import ogrmerge
 
 log = Log(__name__)
@@ -285,17 +286,19 @@ def nearest_facilities_from_layer(
         rtree = STRtree(edge_geoms)
         edge_ids = list(G.edges)
 
-        temp = list(map(lambda start_pt: query_out_node_by_point(rtree, start_pt, edge_geoms, edge_ids, distance_tolerance), start_points))
+        temp = list(map(lambda start_pt: query_nn_by_point(rtree, start_pt, edge_geoms, edge_ids, distance_tolerance), start_points))
         # start_node, ne_edge, ne_pt = query_out_node_by_point(rtree, start_pt, edge_geoms, edge_ids, distance_tolerance)
         start_points_df['ne_edge'] = list(zip(*temp))[0]
         start_points_df['ne_pt'] = list(zip(*temp))[1]
+
+        edge_geoms = {key: value for key, value in nx.get_edge_attributes(G, "geometry").items()}
+        start_points_lst = fix_snapped_points_along_edge(G, start_points_df, edge_geoms, duplication_tolerance)
 
         max_cost = max(travelCosts)
         log.info("计算起始设施可达范围的目标设施...")
 
         if out_type == DataType.csv.value:
-            nearest_facilities = calculate_csv(G, start_points_df, df, max_cost,
-                                            duplication_tolerance, cpu_core)
+            nearest_facilities = calculate_csv(G, start_points_lst, df, max_cost, duplication_tolerance, cpu_core)
             log.info("开始导出计算结果...")
             export_to_file(G, out_path, start_points_df, target_points_df, nearest_facilities,
                            travelCosts, layer_start, "nearest", out_type, cpu_core)
@@ -537,29 +540,29 @@ def progress_callback(complete, message, cb_data):
 
 
 # csv结果的计算过程，不导出geometry
-def calculate_csv(G, start_points_df, df, max_cost, duplication_tolerance, cpu_core):
+def calculate_csv(G, start_points_lst, df, max_cost, duplication_tolerance, cpu_core):
     nearest_facilities = {}  # 存储起始设施可达的目标设施
 
-    target_nodes = set(df['nodeID'].to_list())
+    # target_nodes = set(df['nodeID'].to_list())
 
     # match_df = start_points_df[start_points_df['ne_edge'].apply(lambda x: x[1] in match_target)]
 
+    geom_dict = {}
     if cpu_core == 1:
-        for fid, start_pt, ne_edge, ne_pt in mTqdm(zip(start_points_df['fid'], start_points_df['geom'],
-                                                       start_points_df['ne_edge'], start_points_df['ne_pt']),
-                                                   total=start_points_df.shape[0]):
-            start_node = ne_edge[1]
-            if fid == 37:
-                print("37")
-
-            if start_node > 0:
+        for (start_node, fid, ne_edge, ne_pt) in mTqdm(start_points_lst):
+            if start_node not in geom_dict:
                 _, start_len = split_edge_by_virtual_node(G, ne_edge, ne_pt, duplication_tolerance)
 
-                nf = nearest_facilities_from_point(G, start_node, df,
+                out_node = ne_edge[1]
+                nf = nearest_facilities_from_point(G, out_node, df,
                                                    travelCost=max_cost, start_len=start_len)
 
-                if len(nf) > 0:
-                    nearest_facilities[fid] = nf  # 不导出geometry, 不需要记录start_geom
+                geom_dict[start_node] = nf
+            else:
+                nf = geom_dict[start_node]
+
+            if len(nf) > 0:
+                nearest_facilities[fid] = nf  # 不导出geometry, 不需要记录start_geom
     else:
         QueueManager.register('graphTransfer', GraphTransfer)
 
@@ -568,13 +571,16 @@ def calculate_csv(G, start_points_df, df, max_cost, duplication_tolerance, cpu_c
             lst = []
 
             start_nodes = []
-            for fid, start_pt, ne_edge, ne_pt in zip(start_points_df['fid'], start_points_df['geom'],
-                                                           start_points_df['ne_edge'], start_points_df['ne_pt']):
-                start_node = ne_edge[1]
+            for (start_node, fid, ne_edge, ne_pt) in start_points_lst:
+                out_node = ne_edge[1]
 
-                if start_node > 0:
+                if start_node not in geom_dict:
                     _, start_len = split_edge_by_virtual_node(G, ne_edge, ne_pt, duplication_tolerance)
-                    start_nodes.append((start_node, fid, start_len))
+                    geom_dict[start_node] = start_len
+                else:
+                    start_len = geom_dict[start_node]
+
+                start_nodes.append((out_node, fid, start_node, start_len))
 
             n = ceil(len(start_nodes) / cpu_core)  # 数据按照CPU数量分块
 
@@ -1102,42 +1108,42 @@ def output_geometry(G, start_pt, target_pt, route):
 
 
 def export_csv(out_path, layer_name, res, costs):
-    csvfile_nearest = None
-    csvfile_line = None
+    csvfile_target = None
+    csvfile_dis = None
     try:
         for idx, cost in enumerate(costs):
-            out_nearest_file = os.path.join(out_path, "{}_distance_{}.csv".format(layer_name, cost))
-            out_line_file = os.path.join(out_path, "{}_targets_{}.csv".format(layer_name, cost))
+            out_target_file = os.path.join(out_path, "{}_targets_{}.csv".format(layer_name, cost))
+            out_distance_file = os.path.join(out_path, "{}_distance_{}.csv".format(layer_name, cost))
 
-            csvfile_nearest = open(out_nearest_file, 'w', newline='')
-            csvfile_line = open(out_line_file, 'w', newline='')
+            csvfile_target = open(out_target_file, 'w', newline='')
+            csvfile_dis = open(out_distance_file, 'w', newline='')
 
             # with open(out_nearest_file, 'w', newline='') as csvfile:
-            writer_nearest = csv.writer(csvfile_nearest)
-            writer_line = csv.writer(csvfile_line)
+            writer_target = csv.writer(csvfile_target)
+            writer_dis = csv.writer(csvfile_dis)
 
-            writer_nearest.writerow(['s_fid', 'nearest_fid'])
-            writer_line.writerow(['s_fid', 't_fid', 'cost'])
+            writer_target.writerow(['s_fid', 'nearest_fid'])
+            writer_dis.writerow(['s_fid', 't_fid', 'cost'])
             for key, value in res.items():
                 rk_lst = []
                 for rkey, dis in value['distance'].items():
                     if dis <= cost:
                         rk_lst.append(str(rkey))
-                        writer_line.writerow([key, rkey, dis])
+                        writer_dis.writerow([key, rkey, dis])
 
                 nr = "[{}]".format(",".join(rk_lst))
-                writer_nearest.writerow([key, nr])
+                writer_target.writerow([key, nr])
 
         return True
     except:
         return False
     finally:
-        if csvfile_line is not None:
-            csvfile_line.close()
-            del csvfile_line
-        if csvfile_nearest is not None:
-            csvfile_nearest.close()
-            del csvfile_nearest
+        if csvfile_target is not None:
+            csvfile_target.close()
+            del csvfile_target
+        if csvfile_dis is not None:
+            csvfile_dis.close()
+            del csvfile_dis
 
 
 def nearest_facilities_from_point(G, start_node, target_df,
@@ -1478,39 +1484,45 @@ def nearest_facilities_from_point_worker(shared_custom, lst, travelCost, bRoutes
     with lock:
         bar = mTqdm(lst, desc="worker-{}".format(ipos), position=ipos, leave=False)
     # with mTqdm(lst, desc=current_process().name, position=ipos, leave=False) as bar:
+    geom_dict = {}
     for t in lst:
-        start_node = t[0]
+        out_node = t[0]
         fid = t[1]
         if len(t) > 2:
-            start_len = t[2]
+            start_node = t[2]
+            start_len = t[3]
         else:
+            start_node = t[0]
             start_len = 0
 
-        if fid == 37:
-            print("37")
-        # try:
-        # travelCost_ = travelCost-start_len
-        distances, routes = nx.single_source_dijkstra(G, start_node, weight='length',
-                                                      cutoff=travelCost-start_len)
+        if start_node not in geom_dict:
+            travelCost_ = travelCost-start_len
+            distances, routes = nx.single_source_dijkstra(G, out_node, weight='length',
+                                                          cutoff=travelCost_)
 
-        match_routes = {}
-        match_distances = {}
+            match_routes = {}
+            match_distances = {}
 
-        if start_len > 0:
-            distances = {key: value + start_len for key, value in distances.items()}
+            if start_len > 0:
+                distances = {key: value + start_len for key, value in distances.items()}
 
-        if (len(routes) > 1 and travelCost-start_len > 0) or (len(routes) == 1 and travelCost-start_len <= 0):
-            match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
+            if (len(routes) > 1 and travelCost_ > 0) or (len(routes) == 1 and travelCost_ <= 0):
+                match_df = target_df[target_df['nodeID'].apply(lambda x: x in routes)]
 
-            if len(match_df) > 0:
-                for match_node, target_fid in zip(match_df["nodeID"], match_df["fid"]):
-                    if bRoutes:
-                        route = routes[match_node]
-                        match_routes[target_fid] = route
+                if len(match_df) > 0:
+                    for match_node, target_fid in zip(match_df["nodeID"], match_df["fid"]):
+                        if bRoutes:
+                            route = routes[match_node]
+                            match_routes[target_fid] = route
 
-                    if bDistances:
-                        dis = distances[match_node]
-                        match_distances[target_fid] = dis
+                        if bDistances:
+                            dis = distances[match_node]
+                            match_distances[target_fid] = dis
+
+            geom_dict[start_node] = (match_routes, match_distances)
+        else:
+            match_routes = geom_dict[start_node][0]
+            match_distances = geom_dict[start_node][1]
 
         if bRoutes and bDistances:
             if len(match_routes) > 0:

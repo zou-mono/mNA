@@ -3,6 +3,7 @@ import contextlib
 import math
 import os
 import pickle
+import sys
 import traceback
 from time import strftime
 
@@ -11,6 +12,7 @@ from networkx import Graph
 from osgeo import ogr, osr
 from osgeo.ogr import DataSource, GeometryTypeToName, Geometry, Layer
 from osgeo.osr import SpatialReference
+from pandas import DataFrame
 from shapely import Point, LineString, distance, STRtree, get_num_points, wkt
 from shapely.ops import nearest_points, split, snap
 from shapely.wkt import loads
@@ -627,11 +629,6 @@ def makeGraph(G: Graph, additionalPoints, o_max=-1, distance_tolerance=500, dupl
         # eid = edges.index[pos[1][i]]
         # r_eid = (eid[1], eid[0], eid[2])
 
-        # if eid[0] == 3023 and eid[1] == 9437:
-        #     print("debug")
-        # if eid == (269515, 269514, 1):
-        #     print("debug")
-
         breverse = True
         if eid in points_along_edge:
             # 如果当前边nodes为空，则判断对向边是否为空；如果对向边nodes不为空，则使用对向边作为当前边
@@ -736,10 +733,62 @@ def makeGraph(G: Graph, additionalPoints, o_max=-1, distance_tolerance=500, dupl
     return G, list(node_ids)
 
 
-def _split_edges(G, points_along_edge):
-    # nodes, edges = graph_to_gdfs(G)
-    # s = []
+#  修正落地edge上snpped点，把过于靠近的点合并，减少搜索规模
+def fix_snapped_points_along_edge(G, points_df: DataFrame, edge_geoms, duplication_tolerance=10):
+    points_along_edge = {}
 
+    log.debug("计算edge上的有效snpped点...")
+    icount = 0  # 给新增点计数
+    for eid, ne_pt in mTqdm(zip(points_df['ne_edge'], points_df['ne_pt']), total=len(points_df)):
+        if eid != (-1, -1, -1):
+            edge_geom = edge_geoms[eid]
+            is_endpoint, flag = _is_endpoint_of_edge(ne_pt, edge_geom, tolerance=duplication_tolerance)
+
+            # 如果过于靠近edge的首末节点,则赋值node编号
+            if not is_endpoint:
+                if eid in points_along_edge:
+                    node_pts = points_along_edge[eid]
+                    bflag = True  # 是否需要添加新点
+                    for node_pt in node_pts:
+                        if distance(node_pt[1], ne_pt) <= duplication_tolerance:
+                            bflag = False
+                            break
+
+                    if bflag:
+                        icount += 1
+                        node_pts.append(("i{}".format(str(icount)), ne_pt))
+                        points_along_edge[eid] = node_pts
+                else:
+                    icount += 1
+                    points_along_edge[eid] = [("i{}".format(str(icount)), ne_pt)]
+            else:
+                nid = eid[0] if flag == 's' else eid[1]
+
+                if eid not in points_along_edge:
+                    points_along_edge[eid] = [(nid, Point(G.nodes[nid]['x'], G.nodes[nid]['y']))]
+
+    log.debug("整理目标设施的snapped点位置...")
+    res = []
+    for eid, fid, ne_pt in mTqdm(zip(points_df['ne_edge'], points_df['fid'], points_df['ne_pt']), total=len(points_df)):
+        if eid != (-1, -1, -1):
+            snpped_pts = points_along_edge[eid]
+
+            snpped_id = -1
+            snpped_pt = None
+            min_dis = sys.float_info.max
+            for pt in snpped_pts:
+                dis = distance(pt[1], ne_pt)
+                if dis < min_dis:
+                    min_dis = dis
+                    snpped_id = pt[0]
+                    snpped_pt = pt[1]
+
+            res.append((snpped_id, fid, eid, snpped_pt))
+
+    return res
+
+
+def _split_edges(G, points_along_edge):
     for eid, data in mTqdm(points_along_edge.items(), total=len(points_along_edge)):  # 遍历需要split的边
         node_pts = data['nodes']
 
@@ -815,85 +864,7 @@ def _split_edges(G, points_along_edge):
                 i += 1
 
             G.remove_edge(r_eid[0], r_eid[1], r_eid[2])
-    # for eid, node_pts in points_along_edge.items():  # 遍历需要split的边
-    #     line = G.edges[eid]['geometry']
-    #     edge_attrs = G.edges[eid]
-    #
-    #     # 如果超过1个点，对线上的点按照线上距离进行排序，确定split点的序号
-    #     if len(node_pts) > 1:
-    #         along_disances = [line.project(node_pt[1]) for node_pt in node_pts]
-    #         pt_orders = sorted(range(len(along_disances)), key=along_disances.__getitem__)
-    #         along_disances = list(sorted(along_disances))
-    #     else:
-    #         pt_orders = [0]
-    #
-    #     res_line = line
-    #     left_order = 0  # 用来存储保留下来的点序号
-    #     for i in range(len(pt_orders)):
-    #         cur_order = pt_orders[i]
-    #         if i == 0:  # 第一个点要加上首端点
-    #             cur_node = eid[0]
-    #             next_order = pt_orders[0]
-    #             next_node = node_pts[next_order][0]
-    #             split_point = node_pts[next_order][1]
-    #             geomColl = split_line_by_point(split_point, res_line).geoms
-    #             # if len(geomColl) == 1:
-    #             #     print("error")
-    #             res_line = geomColl[1]
-    #             geom = geomColl[0]
-    #         elif i == len(pt_orders) - 1:  # 最后一个点要加上末端点
-    #             cur_order = pt_orders[-1]
-    #             cur_node = node_pts[cur_order][0]
-    #             next_node = eid[1]
-    #             geom = res_line
-    #         else:  # 中间点是新增node
-    #             cur_node = node_pts[cur_order][0]
-    #             # pre_order = pt_orders[i - 1]
-    #             # pre_node = node_pts[pre_order][0]
-    #             # pre_order = pt_orders[i - 1]
-    #             # pre_pt = node_pts[pre_order][1]
-    #
-    #             if along_disances[i] - along_disances[left_order] <= tolerance:
-    #                 continue
-    #
-    #             # if distance(sole_pt, cur_pt) <= tolerance:
-    #             #     sole_pt = cur_pt
-    #             #     continue
-    #
-    #             split_point = node_pts[cur_order][1]
-    #             geomColl = split_line_by_point(split_point, res_line).geoms
-    #             if len(geomColl) == 1:
-    #                 print("debug")
-    #             res_line = geomColl[1]
-    #             geom = geomColl[0]
-    #             left_order = i
-    #
-    #         if geom.length < tolerance:
-    #             print("debug")
-    #
-    #         G.add_node(node_pts[cur_order][0], **{
-    #             'id': node_pts[cur_order][0],
-    #             'y': node_pts[cur_order][1].y,
-    #             'x': node_pts[cur_order][1].x,
-    #             'bOrigin': False})
-    #
-    #         G.add_edge(cur_node, next_node,
-    #                    **{**edge_attrs,
-    #                       'geometry': geom,
-    #                       'length': geom.length})
-    #
-    #         if len(pt_orders) == 1:  # 只有一个点的时候，要再加上一条edge，从split点到末端点
-    #             cur_order = pt_orders[-1]
-    #             cur_node = node_pts[cur_order][0]
-    #             next_node = eid[1]
-    #             G.add_edge(cur_node, next_node,
-    #                        **{**edge_attrs,
-    #                           'geometry': res_line,
-    #                           'length': res_line.length})
-    #
-    #     G.remove_edge(eid[0], eid[1], eid[2])  # MultiDiGraph删除边要注意加上key，否则有可能把所有边都删除
 
-    # nodes, edges = graph_to_gdfs(G)
     return G
 
 
@@ -919,7 +890,7 @@ def split_edge_by_virtual_node(G, eid, split_point, duplication_tolerance):
     return ret, len  # 从分割点到边末节点的geometry
 
 
-def query_out_node_by_point(rtree, start_pt, edge_geoms, edge_ids, distance_tolerance):
+def query_nn_by_point(rtree, start_pt, edge_geoms, edge_ids, distance_tolerance):
     pos = rtree.query_nearest([start_pt], all_matches=False, return_distance=False,
                               max_distance=distance_tolerance)
     if pos.shape[1] > 0:  # 存在找不到最近邻edge的情况
