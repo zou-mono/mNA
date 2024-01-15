@@ -943,29 +943,11 @@ def export_to_file(G, out_path, start_points_df, target_points_df,
                                                                          new_fields,
                                                                          geom_type=ogr.wkbMultiLineString, open=True)
 
-        # if out_type_f == DataType.fileGDB:
-        #     out_type_f = DataType.FGDBAPI
-
-        # wks = workspaceFactory().get_factory(out_type_f)
-        # out_line_ds = wks.openFromFile(line_out_path, 1)
-        # out_line_layer = out_line_ds.GetLayerByName(line_layer_name)
-        # out_route_ds = wks.openFromFile(route_out_path, 1)
-        # out_route_layer = out_route_ds.GetLayerByName(route_layer_name)
 
         icount = 0
-        # total_features = in_layer.GetFeatureCount()
 
         start_points_dict = start_points_df.to_dict()['geom']
         target_points_dict = target_points_df.to_dict()['geom']
-
-        # if out_type_f == DataType.FGDBAPI:
-        #     out_line_layer.LoadOnlyMode(True)
-        #     out_line_layer.SetWriteLock()
-        #     out_route_layer.LoadOnlyMode(True)
-        #     out_route_layer.SetWriteLock()
-
-        # for in_fea in mTqdm(in_layer, total=total_features):
-        # with mTqdm(in_layer, total=total_features) as bar:
 
         QueueManager.register('routesTransfer', routesTransfer)
         with QueueManager() as manager:
@@ -1307,11 +1289,7 @@ def nearest_geometry_from_point_worker(shared_custom, lst, cost, out_path, panMa
 
                     distances, routes = nx.single_source_dijkstra(G, out_node, weight='length',
                                                                   cutoff=cost - start_len)
-                    # geoms_dict[(start_node, out_node)] = {
-                    #     'distances': distances,
-                    #     'routes': routes,
-                    #     'start_geom': start_geom
-                    # }
+
                     if start_len > 0:
                         distances = {key: value + start_len for key, value in distances.items()}
 
@@ -1416,14 +1394,6 @@ def nearest_geometry_from_point_worker2(shared_custom, lst, cost, out_path, panM
 
     try:
         G, target_df, start_points_dict, target_points_dict = shared_custom.task()
-
-        # out_temp_line_path = os.path.abspath(os.path.join(out_path, "line_temp"))
-        # out_temp_route_path = os.path.abspath(os.path.join(out_path, "route_temp"))
-
-        # if not os.path.exists(out_temp_line_path):
-        #     os.mkdir(out_temp_line_path)
-        # if not os.path.exists(out_temp_route_path):
-        #     os.mkdir(out_temp_route_path)
 
         if not os.path.exists(out_path):
             os.mkdir(out_path)
@@ -1534,10 +1504,6 @@ def nearest_geometry_from_point_worker2(shared_custom, lst, cost, out_path, panM
             del wks
             del ds_start
             del in_layer
-            # if line_writer is not None:
-            #     line_writer.close()
-            # if route_writer is not None:
-            #     route_writer.close()
 
 
 def nearest_facilities_from_point_worker(shared_custom, lst, travelCost, bRoutes=True,
@@ -1561,7 +1527,7 @@ def nearest_facilities_from_point_worker(shared_custom, lst, travelCost, bRoutes
             start_len = 0
 
         if (start_node, out_node) not in geom_dict:
-            travelCost_ = travelCost-start_len
+            travelCost_ = travelCost - start_len
             distances, routes = nx.single_source_dijkstra(G, out_node, weight='length',
                                                           cutoff=travelCost_)
 
@@ -1613,10 +1579,6 @@ def nearest_facilities_from_point_worker(shared_custom, lst, travelCost, bRoutes
         bar.close()
 
     return nearest_facilities
-    # if connection is not None:
-    #     connection.send(nearest_facilities)
-    # else:
-    #     return nearest_facilities
 
 
 class routesTransfer:
@@ -1625,11 +1587,6 @@ class routesTransfer:
         self.res = res
         self.start_points_dict = start_points_dict
         self.target_points_dict = target_points_dict
-        # self.nearest_facilities = nearest_facilities
-        # self.start_dict = start_dict
-        # self.target_dict = target_dict
-        # self.target_weight_dict = target_weight_dict
-        # self.layer_target = layer_target
 
     def task(self):
         return self.G, self.res, self.start_points_dict, self.target_points_dict
@@ -1638,17 +1595,5 @@ class routesTransfer:
 if __name__ == '__main__':
     freeze_support()
     gdal.SetConfigOption('CPL_LOG', 'NUL')
-    # QgsApplication.setPrefixPath('', True)
-    # app = QgsApplication([], True)
-    # app.initQgis()
 
-    # nearest_facilities_from_layer(
-    #     r"D:\空间模拟\PublicSupplyDemand\Data\sz_road_cgcs2000_test.shp",
-    #     r"D:\空间模拟\PublicSupplyDemand\Data\building_test.shp",
-    #     r"D:\空间模拟\PublicSupplyDemand\Data\2022年现状幼儿园.shp",
-    #     travelCost=1000,
-    #     out_type=0,
-    #     direction_field="")
-
-    # sys.exit(app.exec_())
     nearest()

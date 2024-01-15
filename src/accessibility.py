@@ -590,24 +590,10 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
 
                         if len(farthest_nodes) > 0:
                             out_nodes, out_routes, cover_area = out_geometry(farthest_nodes, concave_hull_ratio)
-                            # geoms_dict[start_node] = {
-                            #     'out_nodes': out_nodes,
-                            #     'out_routes': out_routes,
-                            #     'cover_area': cover_area
-                            # }
                         else:
                             out_nodes = ogr.Geometry(ogr.wkbMultiPoint)
                             out_routes = ogr.Geometry(ogr.wkbMultiLineString)
                             cover_area = ogr.Geometry(ogr.wkbPolygon)
-                            # geoms_dict[start_node] = {
-                            #     'out_nodes': out_nodes,
-                            #     'out_routes': out_routes,
-                            #     'cover_area': cover_area
-                            # }
-                        # else:
-                        #     out_nodes = geoms_dict[start_node]['out_nodes']
-                        #     out_routes = geoms_dict[start_node]['out_routes']
-                        #     cover_area = geoms_dict[start_node]['cover_area']
 
                         if not out_nodes.IsEmpty() and bout_nodes:
                             addFeature(in_fea, start_fid, out_nodes, out_node_layer, panMap, out_value)
@@ -769,10 +755,6 @@ def get_farthest_nodes(G, start_geom, route, distance, cost, bwithin):
         }
 
     return farthest_nodes
-
-
-def export_to_file(geoms, fields, crs, source_attributes, out_path, out_type):
-    pass
 
 
 if __name__ == '__main__':
