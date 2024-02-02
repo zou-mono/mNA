@@ -124,7 +124,7 @@ class workspaceFactory(object):
                     log.error("打开文件{}发生错误!\n{}".format(file, traceback.format_exc()))
                 return None
 
-    def get_ds(self, path, access=0):
+    def get_ds(self, path,  access=0, rtype=False):
         fileType = get_suffix(path)
 
         if fileType == DataType.shapefile:
@@ -141,7 +141,11 @@ class workspaceFactory(object):
             raise TypeError("不识别的图形文件格式!")
 
         datasource = wks.openFromFile(path, access)
-        return datasource
+
+        if not rtype:
+            return datasource
+        else:
+            return datasource, fileType.value
 
     def get_layer(self, ds: DataSource, path, layer_name):
         if ds.GetDriver().name == "ESRI Shapefile" or ds.GetDriver().name == "GeoJSON":

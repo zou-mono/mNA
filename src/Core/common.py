@@ -12,6 +12,9 @@ from shapely import Point
 import pandas as pd
 from tqdm import tqdm
 
+# from Core.core import DataType
+from Core.core import DataType
+
 PathLikeOrStr = Union[str, os.PathLike]
 
 def set_main_path(path):
@@ -37,6 +40,18 @@ def launderName(name):
     else:
         return launderName(name)
 
+#  根据输入输出类型判断OBJECTID是否加1或者减1, 或者不变
+def fix_oid(in_type, out_type):
+    if (in_type == DataType.shapefile.value or in_type == DataType.geojson.value) and (
+            out_type == DataType.sqlite.value or out_type == DataType.fileGDB.value):
+        return 1
+    elif (out_type == DataType.shapefile.value or out_type == DataType.geojson.value) and (
+            in_type == DataType.sqlite.value or in_type == DataType.fileGDB.value):
+        return -1
+    elif in_type == out_type:
+        return 0
+    else:
+        return 0
 
 def get_centerPoints(layer):
     Points = []
@@ -216,13 +231,3 @@ def progress_callback(complete, message, cb_data):
     else:
         bar.close()
 
-
-def singleton(cls):
-    instances = {}
-
-    def _singleton(*args, **kwargs):
-        if cls not in instances:
-            instances[cls] = cls(*args, **kwargs)
-        return instances[cls]
-
-    return _singleton

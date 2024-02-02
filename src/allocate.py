@@ -16,7 +16,7 @@ from multiprocessing import cpu_count
 from Core import filegdbapi
 from Core.DataFactory import workspaceFactory, get_suffix, creation_options
 from Core.check import init_check
-from Core.common import get_centerPoints
+from Core.common import get_centerPoints, fix_oid
 from Core.core import DataType, QueueManager, check_layer_name, DataType_suffix
 from Core.fgdb import FieldType
 from Core.filegdbapi import FieldDef
@@ -231,7 +231,7 @@ def allocate_from_layer(
 
         log.info("读取目标设施数据,路径为{}...".format(target_path))
         wks = workspaceFactory()
-        ds_target = wks.get_ds(target_path)
+        ds_target, target_type = wks.get_ds(target_path, rtype=True)
         layer_target, target_layer_name = wks.get_layer(ds_target, target_path, target_layer_name)
         target_weight_idx = layer_target.FindFieldIndex(target_weight_field, False)
         bflag, _, target_capacity, target_capacity_dict, target_capacity_idx, target_weight_dict = \
@@ -241,7 +241,7 @@ def allocate_from_layer(
 
         log.info("读取起始设施数据,路径为{}...".format(start_path))
         wks = workspaceFactory()
-        ds_start = wks.get_ds(start_path)
+        ds_start, start_type = wks.get_ds(start_path, rtype=True)
         layer_start, start_layer_name = wks.get_layer(ds_start, start_path, start_layer_name)
         # layer_start = init_check(layer_start, start_capacity_field, "起始")
         bflag, _, start_capacity, start_capacity_dict, start_capacity_idx, __ = \
@@ -411,10 +411,10 @@ def allocate_from_layer(
 
             log.debug("正在导出起始设施分配结果...")
             bflag1 = export_to_file(start_path, out_path, start_res, start_capacity_dict, travelCosts, layer_start,
-                           layer_name="start_capacity", panMap=panMap, out_type=out_type)
+                           layer_name="start_capacity", panMap=panMap, in_type=start_type, out_type=out_type)
             log.debug("正在导出目标设施分配结果...")
             bflag2 = export_to_file(target_path, out_path, target_res, target_capacity_dict, travelCosts, layer_target,
-                           layer_name="target_capacity", panMap=panMap, out_type=out_type)
+                           layer_name="target_capacity", panMap=panMap, in_type=target_type, out_type=out_type)
 
         end_time = time()
 
@@ -452,7 +452,7 @@ def export_csv(out_path, layer_name, res, capacity_dict, costs):
 
 
 def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, layer_name="", panMap=None,
-                   out_type=DataType.csv.value):
+                   in_type=DataType.shapefile.value, out_type=DataType.csv.value):
     out_ds = None
     out_layer = None
     out_type_f = None
@@ -538,22 +538,25 @@ def export_to_file(in_path, out_path, res, capacity_dict, costs, in_layer=None, 
 
         total_features = out_layer.GetFeatureCount()
 
+        #  输入和输出格式不一致时可能会导致OBJECTID起始值不一致，因此需要进行fix
+        _fix_oid = fix_oid(in_type, out_type)
+
         out_ds.StartTransaction(force=True)
         # out_layer.StartTransaction()
         # for feature in mTqdm(out_layer, total=total_feature):
         with mTqdm(out_layer, total=total_features) as bar:
             feature = out_layer.GetNextFeature()
             while feature:
-                fid = feature.GetFID()
+                in_fid = feature.GetFID() - _fix_oid
 
                 for idx, cost in enumerate(costs):
-                    if fid in capacity_dict:
-                        capacity = capacity_dict[fid]
+                    if in_fid in capacity_dict:
+                        capacity = capacity_dict[in_fid]
                     else:
                         capacity = 0
 
-                    if fid in res:
-                        remain = res[fid][idx]
+                    if in_fid in res:
+                        remain = res[in_fid][idx]
                     else:
                         remain = 0
 

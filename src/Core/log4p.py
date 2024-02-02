@@ -16,7 +16,7 @@ import colorlog
 from colorama import Fore
 from tqdm import tqdm
 
-from Core.common import singleton
+from Core.singleton import singleton
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)  # 忽略warning
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -26,11 +26,9 @@ log_path = os.path.join(cur_path, 'logs')
 if not os.path.exists(log_path):
     os.makedirs(log_path)  # 如果不存在这个logs文件夹，就自动创建一个
 
-
 # 文件的命名
 # c_logName = os.path.join(log_path, '%s.log' % (os.path.basename(os.path.realpath(sys.argv[0])).split('.')[0] + '_' + time.strftime('%Y-%m-%d-%H-%M-%S')))
 c_logName = os.path.join(log_path, '%s.log' % ("mNA" + '_' + time.strftime('%Y-%m-%d-%H-%M-%S')))
-
 
 log_colors_config = {
     'DEBUG': 'cyan',
@@ -152,7 +150,7 @@ class up_stacked_logger:
     def __init__(self, logger, n):
         self.logger = logger
 
-        calling_frame = inspect.stack()[n+1].frame
+        calling_frame = inspect.stack()[n + 1].frame
         trace = inspect.getframeinfo(calling_frame)
 
         class UpStackFilter(logging.Filter):
@@ -172,6 +170,7 @@ class up_stacked_logger:
 
     def __exit__(self, *args, **kwds):
         self.logger.removeFilter(self.f)
+
 
 @singleton
 class Log:
@@ -208,7 +207,7 @@ class Log:
         """处理日志过期天数和文件数量"""
         dir_list = ['logs']  # 要删除文件的目录名
         for dir in dir_list:
-            dirPath = os.path.dirname(self.logName)   # 拼接删除目录完整路径
+            dirPath = os.path.dirname(self.logName)  # 拼接删除目录完整路径
             file_list = self.get_file_sorted(dirPath)  # 返回按修改时间排序的文件list
             if file_list:  # 目录下没有日志文件
                 for i in file_list:
