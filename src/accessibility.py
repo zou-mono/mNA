@@ -30,7 +30,7 @@ lock = Lock()
 
 @click.command()
 @click.option("--network", '-n', type=str, required=True,
-              help="输入网络数据, 支持的格式包括ESRI Shapefile, geojson, ESRI FileGDB, Spatilite, "
+              help="输入网络数据, 支持的格式包括ESRI Shapefile, geojson, ESRI FileGDB, Spatialite, "
                    "gpickle, GEXF, GML, GraphML. 必选.")
 @click.option("--network-layer", type=str, required=False,
               help="输入网络数据的图层名, 可选. 如果是文件数据库(gdb, sqlite)则必须提供,"
@@ -80,7 +80,7 @@ lock = Lock()
 @click.option("--out-graph-type", type=click.Choice(['gpickle', 'graphml', 'gml', 'gexf'], case_sensitive=False),
               required=False, default='gpickle',
               help="如果原始网络数据是空间数据(shp, geojson, gdb等), 则需要设置存储的图文件格式, "
-                   "默认值gpicke. 支持gpickle, graphml, gml, gexf.")
+                   "默认值gpickle. 支持gpickle, graphml, gml, gexf.")
 # 0-ESRI Shapefile, 1-geojson, 2-fileGDB, 3-spatialite, 4-csv
 @click.option("--out-path", "-o", type=str, required=False, default="res",
               help="输出目录名, 可选, 默认值为当前目录下的'res'.")
@@ -487,6 +487,7 @@ def accessible_geometry_from_point_worker(shared_custom, lst, costs, out_path, p
 
         edge_geoms = list(nx.get_edge_attributes(G, "geometry").values())
         rtree = STRtree(edge_geoms)
+
         edge_ids = list(G.edges)
 
         out_type_f = DataType.geojson

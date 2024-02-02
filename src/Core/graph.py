@@ -526,13 +526,14 @@ def _nodes_from_network(layer: Layer):
     return nodes
 
 
-def _parse_nodes_paths(o_nodes, layer, direction_field='oneway',
+def _parse_nodes_paths(o_nodes, layer, direction_field='oneway', waylevel_field='highway',
                        forwardValue='F', backwardValue='T', bothValue='B',
-                       defaultDirection=Direction.DirectionBoth):
+                       defaultDirection=Direction.DirectionBoth, key='auto'):
     nodes = {}
     paths = {}
 
     direction_idx = layer.FindFieldIndex(direction_field, False)
+    waylevel_idx = layer.FindFieldIndex(waylevel_field, False)
 
     ipath = 0
     for feature in layer:
@@ -552,6 +553,11 @@ def _parse_nodes_paths(o_nodes, layer, direction_field='oneway',
             else:
                 direction = Direction.DirectionBoth
 
+        if waylevel_idx == -1:
+            waylevel = "null"
+        else:
+            waylevel = feature.GetField(waylevel_idx)
+
         if geom.GetGeometryName() == "LINESTRING":
             points = geom.GetPoints()
             node_ids = []
@@ -560,13 +566,21 @@ def _parse_nodes_paths(o_nodes, layer, direction_field='oneway',
                 nodes[v['id']] = v
                 node_ids.append(v['id'])
 
-            paths[ipath] = {
-                # 'id': ipath,
-                'feature_id': fid,
-                'nodes': node_ids,
-                'direction': direction
-                # 'geometry': loads(geom.ExportToWkt())
-            }
+            if key == 'auto':
+                paths[ipath] = {
+                    # 'id': ipath,
+                    'feature_id': fid,
+                    'nodes': node_ids,
+                    'direction': direction,
+                    'waylevel': waylevel
+                    # 'geometry': loads(geom.ExportToWkt())
+                }
+            elif key == 'fid':
+                paths[fid] = {
+                    'nodes': node_ids,
+                    'direction': direction,
+                    'waylevel': waylevel
+                }
 
             ipath += 1
 
@@ -579,13 +593,21 @@ def _parse_nodes_paths(o_nodes, layer, direction_field='oneway',
                     nodes[v['id']] = v
                     node_ids.append(v['id'])
 
-                paths[ipath] = {
-                    # 'id': ipath,
-                    'feature_id': fid,
-                    'nodes': node_ids,
-                    'direction': direction
-                    # 'geometry': loads(part.ExportToWkt())
-                }
+                if key == 'auto':
+                    paths[ipath] = {
+                        # 'id': ipath,
+                        'feature_id': fid,
+                        'nodes': node_ids,
+                        'direction': direction,
+                        'waylevel': waylevel
+                        # 'geometry': loads(geom.ExportToWkt())
+                    }
+                elif key == 'fid':
+                    paths[fid] = {
+                        'nodes': node_ids,
+                        'direction': direction,
+                        'waylevel': waylevel
+                    }
 
                 ipath += 1
 

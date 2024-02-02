@@ -32,7 +32,7 @@ lock = Lock()
 
 @click.command()
 @click.option("--network", '-n', type=str, required=True,
-              help="输入网络数据, 支持的格式包括ESRI Shapefile, geojson, ESRI FileGDB, Spatilite, "
+              help="输入网络数据, 支持的格式包括ESRI Shapefile, geojson, ESRI FileGDB, Spatialite, "
                    "gpickle, GEXF, GML, GraphML. 必选.")
 @click.option("--network-layer", type=str, required=False,
               help="输入网络数据的图层名, 可选. 如果是文件数据库(gdb, sqlite)则必须提供,"

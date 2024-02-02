@@ -1,16 +1,13 @@
 """Simplify, correct, and consolidate network topology."""
 
-import logging as lg
-
 import networkx as nx
 from shapely.geometry import LineString
 from shapely.geometry import MultiPolygon
 from shapely.geometry import Point
 from shapely.geometry import Polygon
+import geopandas as gpd
 
-# from . import stats
-# from . import utils
-# from . import utils_graph
+from . import utils_graph, stats
 from ._errors import GraphSimplificationError
 from .log4p import Log
 
@@ -347,3 +344,274 @@ def simplify_graph(G, strict=True, remove_rings=True, track_merged=False):
     log.info("简化后的图G: 节点从{}个简化为{}个，边从{}条简化为{}条".format(initial_node_count, len(G),
                                                              initial_edge_count, len(G.edges)))
     return G
+
+
+def consolidate_intersections(
+        G, tolerance=10, rebuild_graph=True, dead_ends=False, reconnect_edges=True
+):
+    """
+    Consolidate intersections comprising clusters of nearby nodes.
+
+    Merges nearby nodes and returns either their centroids or a rebuilt graph
+    with consolidated intersections and reconnected edge geometries. The
+    tolerance argument should be adjusted to approximately match street design
+    standards in the specific street network, and you should always use a
+    projected graph to work in meaningful and consistent units like meters.
+    Note the tolerance represents a per-node buffering radius: for example, to
+    consolidate nodes within 10 meters of each other, use tolerance=5.
+
+    When rebuild_graph=False, it uses a purely geometrical (and relatively
+    fast) algorithm to identify "geometrically close" nodes, merge them, and
+    return just the merged intersections' centroids. When rebuild_graph=True,
+    it uses a topological (and slower but more accurate) algorithm to identify
+    "topologically close" nodes, merge them, then rebuild/return the graph.
+    Returned graph's node IDs represent clusters rather than osmids. Refer to
+    nodes' osmid_original attributes for original osmids. If multiple nodes
+    were merged together, the osmid_original attribute is a list of merged
+    nodes' osmids.
+
+    Divided roads are often represented by separate centerline edges. The
+    intersection of two divided roads thus creates 4 nodes, representing where
+    each edge intersects a perpendicular edge. These 4 nodes represent a
+    single intersection in the real world. A similar situation occurs with
+    roundabouts and traffic circles. This function consolidates nearby nodes
+    by buffering them to an arbitrary distance, merging overlapping buffers,
+    and taking their centroid.
+
+    Parameters
+    ----------
+    G : networkx.MultiDiGraph
+        a projected graph
+    tolerance : float
+        nodes are buffered to this distance (in graph's geometry's units) and
+        subsequent overlaps are dissolved into a single node
+    rebuild_graph : bool
+        if True, consolidate the nodes topologically, rebuild the graph, and
+        return as networkx.MultiDiGraph. if False, consolidate the nodes
+        geometrically and return the consolidated node points as
+        geopandas.GeoSeries
+    dead_ends : bool
+        if False, discard dead-end nodes to return only street-intersection
+        points
+    reconnect_edges : bool
+        ignored if rebuild_graph is not True. if True, reconnect edges and
+        their geometries in rebuilt graph to the consolidated nodes and update
+        edge length attributes; if False, returned graph has no edges (which
+        is faster if you just need topologically consolidated intersection
+        counts).
+
+    Returns
+    -------
+    networkx.MultiDiGraph or geopandas.GeoSeries
+        if rebuild_graph=True, returns MultiDiGraph with consolidated
+        intersections and reconnected edge geometries. if rebuild_graph=False,
+        returns GeoSeries of shapely Points representing the centroids of
+        street intersections
+    """
+    # if dead_ends is False, discard dead-ends to retain only intersections
+    if not dead_ends:
+        spn = stats.streets_per_node(G)
+        dead_end_nodes = [node for node, count in spn.items() if count <= 1]
+
+        # make a copy to not mutate original graph object caller passed in
+        G = G.copy()
+        G.remove_nodes_from(dead_end_nodes)
+
+    if rebuild_graph:
+        if not G or not G.edges:
+            # cannot rebuild a graph with no nodes or no edges, just return it
+            return G
+
+        # otherwise
+        return _consolidate_intersections_rebuild_graph(G, tolerance, reconnect_edges)
+
+    # otherwise, if we're not rebuilding the graph
+    if not G:
+        # if graph has no nodes, just return empty GeoSeries
+        return gpd.GeoSeries(crs=G.graph["crs"])
+
+    # otherwise, return the centroids of the merged intersection polygons
+    return _merge_nodes_geometric(G, tolerance).centroid
+
+
+def _consolidate_intersections_rebuild_graph(G, tolerance=10, reconnect_edges=True):
+    """
+    Consolidate intersections comprising clusters of nearby nodes.
+
+    Merge nodes and return a rebuilt graph with consolidated intersections and
+    reconnected edge geometries.
+
+    The tolerance argument should be adjusted to approximately match street
+    design standards in the specific street network, and you should always use
+    a projected graph to work in meaningful and consistent units like meters.
+
+    Returned graph's node IDs represent clusters rather than osmids. Refer to
+    nodes' osmid_original attributes for original osmids. If multiple nodes
+    were merged together, the osmid_original attribute is a list of merged
+    nodes' osmids.
+
+    Parameters
+    ----------
+    G : networkx.MultiDiGraph
+        a projected graph
+    tolerance : float
+        nodes are buffered to this distance (in graph's geometry's units) and
+        subsequent overlaps are dissolved into a single node
+    reconnect_edges : bool
+        ignored if rebuild_graph is not True. if True, reconnect edges and
+        their geometries in rebuilt graph to the consolidated nodes and update
+        edge length attributes; if False, returned graph has no edges (which
+        is faster if you just need topologically consolidated intersection
+        counts).
+
+    Returns
+    -------
+    H : networkx.MultiDiGraph
+        a rebuilt graph with consolidated intersections and reconnected
+        edge geometries
+    """
+    # STEP 1
+    # buffer nodes to passed-in distance and merge overlaps. turn merged nodes
+    # into gdf and get centroids of each cluster as x, y
+    node_clusters = gpd.GeoDataFrame(geometry=_merge_nodes_geometric(G, tolerance))
+    centroids = node_clusters.centroid
+    node_clusters["x"] = centroids.x
+    node_clusters["y"] = centroids.y
+
+    # STEP 2
+    # attach each node to its cluster of merged nodes. first get the original
+    # graph's node points then spatial join to give each node the label of
+    # cluster it's within
+    node_points = utils_graph.graph_to_gdfs(G, edges=False)[["geometry"]]
+    gdf = gpd.sjoin(node_points, node_clusters, how="left", predicate="within")
+    gdf = gdf.drop(columns="geometry").rename(columns={"index_right": "cluster"})
+
+    # STEP 3
+    # if a cluster contains multiple components (i.e., it's not connected)
+    # move each component to its own cluster (otherwise you will connect
+    # nodes together that are not truly connected, e.g., nearby deadends or
+    # surface streets with bridge).
+    groups = gdf.groupby("cluster")
+    for cluster_label, nodes_subset in groups:
+        if len(nodes_subset) > 1:
+            # identify all the (weakly connected) component in cluster
+            wccs = list(nx.weakly_connected_components(G.subgraph(nodes_subset.index)))
+            if len(wccs) > 1:
+                # if there are multiple components in this cluster
+                suffix = 0
+                for wcc in wccs:
+                    # set subcluster xy to the centroid of just these nodes
+                    idx = list(wcc)
+                    subcluster_centroid = node_points.loc[idx].unary_union.centroid
+                    gdf.loc[idx, "x"] = subcluster_centroid.x
+                    gdf.loc[idx, "y"] = subcluster_centroid.y
+                    # move to subcluster by appending suffix to cluster label
+                    gdf.loc[idx, "cluster"] = f"{cluster_label}-{suffix}"
+                    suffix += 1
+
+    # give nodes unique integer IDs (subclusters with suffixes are strings)
+    gdf["cluster"] = gdf["cluster"].factorize()[0]
+
+    # STEP 4
+    # create new empty graph and copy over misc graph data
+    H = nx.MultiDiGraph()
+    H.graph = G.graph
+
+    # STEP 5
+    # create a new node for each cluster of merged nodes
+    # regroup now that we potentially have new cluster labels from step 3
+    groups = gdf.groupby("cluster")
+    for cluster_label, nodes_subset in groups:
+        osmids = nodes_subset.index.to_list()
+        if len(osmids) == 1:
+            # if cluster is a single node, add that node to new graph
+            osmid = osmids[0]
+            H.add_node(cluster_label, osmid_original=osmid, **G.nodes[osmid])
+        else:
+            # if cluster is multiple merged nodes, create one new node to
+            # represent them
+            H.add_node(
+                cluster_label,
+                osmid_original=str(osmids),
+                x=nodes_subset["x"].iloc[0],
+                y=nodes_subset["y"].iloc[0],
+            )
+
+    # calculate street_count attribute for all nodes lacking it
+    null_nodes = [n for n, sc in H.nodes(data="street_count") if sc is None]
+    street_count = stats.count_streets_per_node(H, nodes=null_nodes)
+    nx.set_node_attributes(H, street_count, name="street_count")
+
+    if not G.edges or not reconnect_edges:
+        # if reconnect_edges is False or there are no edges in original graph
+        # (after dead-end removed), then skip edges and return new graph as-is
+        return H
+
+    # STEP 6
+    # create new edge from cluster to cluster for each edge in original graph
+    gdf_edges = utils_graph.graph_to_gdfs(G, nodes=False)
+    for u, v, k, data in G.edges(keys=True, data=True):
+        u2 = gdf.loc[u, "cluster"]
+        v2 = gdf.loc[v, "cluster"]
+
+        # only create the edge if we're not connecting the cluster
+        # to itself, but always add original self-loops
+        if (u2 != v2) or (u == v):
+            data["u_original"] = u
+            data["v_original"] = v
+            if "geometry" not in data:
+                data["geometry"] = gdf_edges.loc[(u, v, k), "geometry"]
+            H.add_edge(u2, v2, **data)
+
+    # STEP 7
+    # for every group of merged nodes with more than 1 node in it, extend the
+    # edge geometries to reach the new node point
+    for cluster_label, nodes_subset in groups:
+        # but only if there were multiple nodes merged together,
+        # otherwise it's the same old edge as in original graph
+        if len(nodes_subset) > 1:
+            # get coords of merged nodes point centroid to prepend or
+            # append to the old edge geom's coords
+            x = H.nodes[cluster_label]["x"]
+            y = H.nodes[cluster_label]["y"]
+            xy = [(x, y)]
+
+            # for each edge incident on this new merged node, update its
+            # geometry to extend to/from the new node's point coords
+            in_edges = set(H.in_edges(cluster_label, keys=True))
+            out_edges = set(H.out_edges(cluster_label, keys=True))
+            for u, v, k in in_edges | out_edges:
+                old_coords = list(H.edges[u, v, k]["geometry"].coords)
+                new_coords = xy + old_coords if cluster_label == u else old_coords + xy
+                new_geom = LineString(new_coords)
+                H.edges[u, v, k]["geometry"] = new_geom
+
+                # update the edge length attribute, given the new geometry
+                H.edges[u, v, k]["length"] = new_geom.length
+
+    return H
+
+def _merge_nodes_geometric(G, tolerance):
+    """
+    Geometrically merge nodes within some distance of each other.
+
+    Parameters
+    ----------
+    G : networkx.MultiDiGraph
+        a projected graph
+    tolerance : float
+        buffer nodes to this distance (in graph's geometry's units) then merge
+        overlapping polygons into a single polygon via a unary union operation
+
+    Returns
+    -------
+    merged : GeoSeries
+        the merged overlapping polygons of the buffered nodes
+    """
+    # buffer nodes GeoSeries then get unary union to merge overlaps
+    merged = utils_graph.graph_to_gdfs(G, edges=False)["geometry"].buffer(tolerance).unary_union
+
+    # if only a single node results, make it iterable to convert to GeoSeries
+    merged = MultiPolygon([merged]) if isinstance(merged, Polygon) else merged
+
+    return gpd.GeoSeries(merged.geoms, crs=G.graph["crs"])

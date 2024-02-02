@@ -47,6 +47,13 @@ DataType_dict = {
     DataType.jsonfg: "JSONFG"
 }
 
+DataType_num = {
+    'shp': DataType.shapefile.value,
+    'geojson': DataType.geojson.value,
+    'filegdb': DataType.fileGDB.value,
+    'sqlite': DataType.sqlite.value,
+    'csv': DataType.csv.value
+}
 
 def remove_temp_folder(in_path):
     try:

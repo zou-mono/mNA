@@ -38,7 +38,7 @@ concurrence_num = 1
 
 @click.command()
 @click.option("--network", '-n', type=str, required=True,
-              help="输入网络数据, 支持的格式包括ESRI Shapefile, geojson, ESRI FileGDB, Spatilite, "
+              help="输入网络数据, 支持的格式包括ESRI Shapefile, geojson, ESRI FileGDB, Spatialite, "
                    "gpickle, GEXF, GML, GraphML. 必选.")
 @click.option("--network-layer", type=str, required=False,
               help="输入网络数据的图层名, 可选. 如果是文件数据库(gdb, sqlite)则必须提供,"
@@ -90,7 +90,7 @@ concurrence_num = 1
               help="定义拓扑重复点的容差，取值越大则最后的图节点越少，运行速度越快，但同时会牺牲一定的精度. 可选, 默认值为10.")
 @click.option("--out-type", type=click.Choice(['shp', 'geojson', 'filegdb', 'sqlite', 'csv'], case_sensitive=False),
               required=False, default='csv',
-              help="输出文件格式, 默认值shp. 支持格式shp-ESRI Shapefile, geojson-geojson, filegdb-ESRI FileGDB, "
+              help="输出文件格式, 默认值csv. 支持格式shp-ESRI Shapefile, geojson-geojson, filegdb-ESRI FileGDB, "
                    "sqlite-spatialite, csv-csv.")
 @click.option("--out-graph-type", type=click.Choice(['gpickle', 'graphml', 'gml', 'gexf'], case_sensitive=False),
               required=False, default='gpickle',

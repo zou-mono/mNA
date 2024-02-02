@@ -1,0 +1,1 @@
+imgs_folder = "./images"
